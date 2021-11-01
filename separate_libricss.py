@@ -10,18 +10,19 @@ from pathlib import Path
 
 from nnet import supported_nnet
 from executor.executor import Executor
-from utils.audio_util import WaveReader, write_wav
+from utils.audio_util import SingleChannelWaveReader, write_wav
 from utils.mvdr_util import make_mvdr
+
+from lhotse.recipes.libricss import prepare_libricss
 
 
 class EgsReader(object):
     """
     Egs reader
     """
-    def __init__(self,
-                 mix_scp,
-                 sr=16000):
-        self.mix_reader = WaveReader(mix_scp, sr=sr)
+
+    def __init__(self, recordings):
+        self.mix_reader = SingleChannelWaveReader(recordings)
 
     def __len__(self):
         return len(self.mix_reader)
@@ -37,6 +38,7 @@ class Separator(object):
     """
     A simple wrapper for speech separation
     """
+
     def __init__(self, cpt_dir, get_mask=False, device_id=-1):
         # load executor
         cpt_dir = Path(cpt_dir)
@@ -57,7 +59,9 @@ class Separator(object):
         """
         Do separation
         """
-        egs["mix"] = th.from_numpy(egs["mix"][None, :]).to(self.device, non_blocking=True)
+        egs["mix"] = th.from_numpy(egs["mix"][None, :]).to(
+            self.device, non_blocking=True
+        )
         with th.no_grad():
             spks = self.executor(egs)
             spks = [s.detach().squeeze().cpu().numpy() for s in spks]
@@ -73,14 +77,17 @@ class Separator(object):
         if nnet_type not in supported_nnet:
             raise RuntimeError(f"Unknown network type: {nnet_type}")
         nnet = supported_nnet[nnet_type](**conf["nnet_conf"])
-        executor = Executor(nnet, extractor_kwargs=conf["extractor_conf"], get_mask=self.get_mask)
+        executor = Executor(
+            nnet, extractor_kwargs=conf["extractor_conf"], get_mask=self.get_mask
+        )
         return executor
 
 
-
 def run(args):
+    # prepare LibriCSS data
+    manifests = prepare_libricss(args.corpus_dir)
     # egs reader
-    egs_reader = EgsReader(args.mix_scp, sr=args.sr)
+    egs_reader = EgsReader(manifests["recordings"])
     # separator
     seperator = Separator(args.checkpoint, device_id=args.device_id, get_mask=args.mvdr)
 
@@ -99,8 +106,7 @@ def run(args):
 
         for i, s in enumerate(spks):
             if i < args.num_spks:
-                write_wav(dump_dir / f"{key}_{i}.wav",
-                          s * 0.9 / np.max(np.abs(s)))
+                write_wav(dump_dir / f"{key}_{i}.wav", s * 0.9 / np.max(np.abs(s)))
 
     print(f"Processed {len(egs_reader)} utterances done")
 
@@ -108,32 +114,25 @@ def run(args):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
         description="Command to do speech separation",
-        formatter_class=argparse.ArgumentDefaultsHelpFormatter)
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
     parser.add_argument("--checkpoint", type=str, help="Directory of checkpoint")
-    parser.add_argument("--mix-scp",
-                        type=str,
-                        required=True,
-                        help="Rspecifier for mixed audio")
-    parser.add_argument("--num_spks",
-                        type=int,
-                        default=2,
-                        help="Number of the speakers")
-    parser.add_argument("--device-id",
-                        type=int,
-                        default=-1,
-                        help="GPU-id to offload model to, -1 means "
-                        "running on CPU")
-    parser.add_argument("--sr",
-                        type=int,
-                        default=16000,
-                        help="Sample rate for mixture input")
-    parser.add_argument("--dump-dir",
-                        type=str,
-                        default="sep",
-                        help="Directory to dump separated speakers")
-    parser.add_argument("--mvdr",
-                        type=bool,
-                        default=False,
-                        help="apply mvdr")
+    parser.add_argument("--corpus-dir", type=str, help="Directory of LibriCSS corpus")
+    parser.add_argument(
+        "--num_spks", type=int, default=2, help="Number of the speakers"
+    )
+    parser.add_argument(
+        "--device-id",
+        type=int,
+        default=-1,
+        help="GPU-id to offload model to, -1 means " "running on CPU",
+    )
+    parser.add_argument(
+        "--dump-dir",
+        type=str,
+        default="sep",
+        help="Directory to dump separated speakers",
+    )
+    parser.add_argument("--mvdr", type=bool, default=False, help="apply mvdr")
     args = parser.parse_args()
     run(args)
