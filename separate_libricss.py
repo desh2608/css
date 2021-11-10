@@ -1,86 +1,29 @@
 #!/usr/bin/env python
 
-import yaml
+from pathlib import Path
 import argparse
+import yaml
+import logging
+import sys
 
-import torch as th
+import torch
+import onnxruntime
 import numpy as np
 
 from pathlib import Path
 
-from nnet import supported_nnet
-from executor.executor import Executor
-from utils.audio_util import SingleChannelWaveReader, write_wav
-from utils.mvdr_util import make_mvdr
+from css.utils.audio_util import EgsReader, write_wav
+from css.executor.separator import Separator
+from css.executor.stitcher import Stitcher
+from css.executor.beamformer import Beamformer
 
 from lhotse.recipes.libricss import prepare_libricss
 
-
-class EgsReader(object):
-    """
-    Egs reader
-    """
-
-    def __init__(self, recordings):
-        self.mix_reader = SingleChannelWaveReader(recordings)
-
-    def __len__(self):
-        return len(self.mix_reader)
-
-    def __iter__(self):
-        for key, mix in self.mix_reader:
-            egs = dict()
-            egs["mix"] = mix
-            yield key, egs
-
-
-class Separator(object):
-    """
-    A simple wrapper for speech separation
-    """
-
-    def __init__(self, cpt_dir, get_mask=False, device_id=-1):
-        # load executor
-        cpt_dir = Path(cpt_dir)
-        self.get_mask = get_mask
-        self.executor = self._load_executor(cpt_dir)
-        cpt_ptr = cpt_dir / "best.pt.tar"
-        epoch = self.executor.resume(cpt_ptr.as_posix())
-        print(f"Load checkpoint at {cpt_dir}, on epoch {epoch}")
-        print(f"Nnet summary: {self.executor}")
-        if device_id < 0:
-            self.device = th.device("cpu")
-        else:
-            self.device = th.device(f"cuda:{device_id:d}")
-            self.executor.to(self.device)
-        self.executor.eval()
-
-    def separate(self, egs):
-        """
-        Do separation
-        """
-        egs["mix"] = th.from_numpy(egs["mix"][None, :]).to(
-            self.device, non_blocking=True
-        )
-        with th.no_grad():
-            spks = self.executor(egs)
-            spks = [s.detach().squeeze().cpu().numpy() for s in spks]
-            return spks
-
-    def _load_executor(self, cpt_dir):
-        """
-        Load executor from checkpoint
-        """
-        with open(cpt_dir / "train.yaml", "r") as f:
-            conf = yaml.load(f, Loader=yaml.FullLoader)
-        nnet_type = conf["nnet_type"]
-        if nnet_type not in supported_nnet:
-            raise RuntimeError(f"Unknown network type: {nnet_type}")
-        nnet = supported_nnet[nnet_type](**conf["nnet_conf"])
-        executor = Executor(
-            nnet, extractor_kwargs=conf["extractor_conf"], get_mask=self.get_mask
-        )
-        return executor
+logging.basicConfig(
+    format="%(asctime)s %(levelname)-8s %(message)s",
+    level=logging.INFO,
+    datefmt="%Y-%m-%d %H:%M:%S",
+)
 
 
 def run(args):
@@ -88,44 +31,69 @@ def run(args):
     manifests = prepare_libricss(args.corpus_dir)
     # egs reader
     egs_reader = EgsReader(manifests["recordings"])
-    # separator
-    seperator = Separator(args.checkpoint, device_id=args.device_id, get_mask=args.mvdr)
+
+    # Settings for onnxruntime.
+    opts = onnxruntime.SessionOptions()
+    opts.inter_op_num_threads = 1
+    opts.intra_op_num_threads = 1
+    opts.execution_mode = onnxruntime.ExecutionMode.ORT_SEQUENTIAL
+    opts.use_deterministic_compute = True
+
+    # Load the config
+    exp_config = yaml.load(open(args.config), Loader=yaml.FullLoader)
+    device = torch.device("cuda" if args.gpu and torch.cuda.is_available() else "cpu")
+    sampling_rate = exp_config["sampling_rate"]
 
     dump_dir = Path(args.dump_dir)
     dump_dir.mkdir(exist_ok=True, parents=True)
 
-    print(f"Start Separation " + ("w/ mvdr" if args.mvdr else "w/o mvdr"))
+    # Create class objects for separation, stitching, and beamforming
+    separator = Separator(
+        exp_config["separation"], sess_options=opts, sr=sampling_rate, device=device
+    )
+    stitcher = Stitcher(exp_config["stitching"])
+    beamformer = Beamformer(exp_config["beamforming"])
+
     for key, egs in egs_reader:
-        print(f"Processing utterance {key}...")
-        mixed = egs["mix"]
-        spks = seperator.separate(egs)
+        if key != "OV40_session1":
+            continue
+        logging.info(f"Processing utterance {key}...")
+        mixed = egs["mix"]  # (D x T)
 
-        if args.mvdr:
-            res1, res2 = make_mvdr(np.asfortranarray(mixed.T), spks)
-            spks = [res1, res2]
+        # Apply separation to get masks. The masks here will be a list of masks, each
+        # corresponding to one window
+        window_masks, mag_specs = separator.separate(mixed)
 
-        for i, s in enumerate(spks):
-            if i < args.num_spks:
-                write_wav(dump_dir / f"{key}_{i}.wav", s * 0.9 / np.max(np.abs(s)))
+        # Stitch window-level masks to get session-level masks
+        mask_permutation = stitcher.get_stitch(mag_specs, window_masks)
+        stitched_masks = stitcher.get_connect(mask_permutation, window_masks)
 
-    print(f"Processed {len(egs_reader)} utterances done")
+        # Apply beamforming using masks
+        wav_ch0, wav_ch1 = beamformer.continuous_process(mixed, stitched_masks)
+
+        # Write out the separated audio
+        write_wav(dump_dir / f"{key}_ch0.wav", wav_ch0)
+        write_wav(dump_dir / f"{key}_ch1.wav", wav_ch1)
+
+    logging.info(f"Processed {len(egs_reader)} utterances")
 
 
 if __name__ == "__main__":
+    rootdir = Path(__file__).resolve().parents[0]
+    default_cfg = rootdir.joinpath("conf/config.yaml")
     parser = argparse.ArgumentParser(
         description="Command to do speech separation",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
-    parser.add_argument("--checkpoint", type=str, help="Directory of checkpoint")
+    parser.add_argument(
+        "--config",
+        metavar="<yaml-file>",
+        default=str(default_cfg),
+        help="CSS configuration file.",
+    )
     parser.add_argument("--corpus-dir", type=str, help="Directory of LibriCSS corpus")
     parser.add_argument(
         "--num_spks", type=int, default=2, help="Number of the speakers"
-    )
-    parser.add_argument(
-        "--device-id",
-        type=int,
-        default=-1,
-        help="GPU-id to offload model to, -1 means " "running on CPU",
     )
     parser.add_argument(
         "--dump-dir",
@@ -133,6 +101,11 @@ if __name__ == "__main__":
         default="sep",
         help="Directory to dump separated speakers",
     )
-    parser.add_argument("--mvdr", type=bool, default=False, help="apply mvdr")
+    parser.add_argument(
+        "--gpu",
+        type=bool,
+        default=True,
+        help="Use GPU for separation",
+    )
     args = parser.parse_args()
     run(args)

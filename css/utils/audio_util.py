@@ -1,10 +1,28 @@
-import os
+from pathlib import Path
 import numpy as np
-
-import scipy.io.wavfile as wf
+import torchaudio
+import torch
 
 MAX_INT16 = np.iinfo(np.int16).max
 EPSILON = np.finfo(np.float32).eps
+
+
+class EgsReader(object):
+    """
+    Egs reader
+    """
+
+    def __init__(self, recordings):
+        self.mix_reader = SingleChannelWaveReader(recordings)
+
+    def __len__(self):
+        return len(self.mix_reader)
+
+    def __iter__(self):
+        for key, mix in self.mix_reader:
+            egs = dict()
+            egs["mix"] = mix
+            yield key, egs
 
 
 class SingleChannelWaveReader(object):
@@ -45,7 +63,7 @@ def read_wav(recording, normalize=True, return_rate=False):
     # samps_int16: N x C or N
     #   N: number of samples
     #   C: number of channels
-    samps = recording.load_audio(channels=0)
+    samps = torch.Tensor(recording.load_audio(channels=0))
     samp_rate = recording.sampling_rate
 
     # normalize like MATLAB and librosa
@@ -62,16 +80,8 @@ def write_wav(fname, samps, sr=16000, normalize=True):
     """
     if normalize:
         samps = samps * MAX_INT16
-    # scipy.io.wavfile.write could write single/multi-channel files
-    # for multi-channel, accept ndarray [Nsamples, Nchannels]
-    if samps.ndim != 1 and samps.shape[0] < samps.shape[1]:
-        samps = np.transpose(samps)
-        samps = np.squeeze(samps)
-    # same as MATLAB and kaldi
-    samps_int16 = samps.astype(np.int16)
-    fdir = os.path.dirname(fname)
-    if fdir:
-        os.makedirs(fdir, exist_ok=True)
-    # NOTE: librosa 0.6.0 seems could not write non-float narray
-    #       so use scipy.io.wavfile instead
-    wf.write(fname, sr, samps_int16)
+    fname = Path(fname)
+    fdir = fname.parent
+    if not fdir.exists():
+        fdir.mkdir(parents=True)
+    torchaudio.save(fname, samps, sr)
