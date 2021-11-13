@@ -1,0 +1,27 @@
+sampling_rate: 16000
+segmentation:
+  boundary_threshold: 0.25
+  maximum_length: 15
+separation:
+  batch_size: 1
+  eval_hop: 0.8
+  eval_win: 2.4
+  frame_length: 512
+  frame_shift: 256
+  model_path: checkpoints/1ch_conformer_large.onnx
+stitching:
+  eval_hop: 0.8
+  eval_win: 2.4
+  hop_size: 256
+  n_fft: 512
+  connector: mask
+  stitcher: mask
+beamforming:
+  batch_size: 32
+  type: 'SoudenMVDRBeamformer'
+  hop_size: 256
+  n_fft: 512
+  eval_hop: 0.8
+  proceed_margin: 2
+  eval_win: 2.4
+  wta_thresh: 0.0001
