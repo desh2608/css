@@ -4,20 +4,20 @@
 . ./path.sh
 
 lr=0.0001
-warmup=10000
+warmup=15000
 decay=1e-05
 weight_decay=1e-07
 batches_per_epoch=500
-num_epochs=50
-nj_init=1
-nj_final=1
+num_epochs=100
+nj_init=2
+nj_final=4
 batchsize=32
 num_workers=4
 grad_thresh=5.0
 seed=0
 resume=
 init=
-exp_dir=exp/conformer_libri_100
+exp_dir=exp/conformer_libri_360
 
 . ./utils/parse_options.sh
 
@@ -38,7 +38,7 @@ if [ ! -f data/cuts_train-clean-360.json ]; then
 
   # Prepare RIRs and noise manifests (we use real RIRs with isotropic noises)
   echo "Preparing RIRs and noise manifests..."
-  lhotse prepare rir-noise -p real_rir -p iso_noise /export/c01/corpora6/RIRS_NOISES data/
+  lhotse prepare rir-noise -p sim_rir -p iso_noise /export/c01/corpora6/RIRS_NOISES data/
   lhotse cut simple -r data/recordings_iso_noise.json data/cuts_iso_noise.json
 fi
 
@@ -63,13 +63,12 @@ train_script="train.py ${resume_opts} \
   --batches-per-epoch ${batches_per_epoch} \
   --num-epochs 1 \
   --grad-thresh ${grad_thresh} \
-  --train-cuts data/cuts_train-clean-100.json \
-  --dev-cuts data/cuts_dev-clean.json
-  --rir-recordings data/recordings_real_rir.json \
-  --noise-cuts data/cuts_iso_noise.json
+  --train-manifests data/cuts_dev-clean.json \
+  --rir-manifest data/recordings_sim_rir.json \
+  --noise-manifest data/cuts_iso_noise.json
   "
 
-train_cmd="utils/retry.pl utils/queue-freegpu.pl --mem 8G --gpu 1"
+train_cmd="utils/retry.pl utils/queue-freegpu.pl --mem 8G --gpu 1 -l hostname=c*"
 
 train_parallel.sh ${resume_opts} \
   --cmd "$train_cmd" \

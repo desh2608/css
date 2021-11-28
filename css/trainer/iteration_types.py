@@ -30,9 +30,9 @@ def train_one_epoch(args, dataloader, model, objective, optim, lr_sched, device=
             args.batches_per_epoch,
             "LR: {:0.5e}".format(lr_sched.curr_lr),
             "bsize: ",
-            b["mix"].size(0),
-            "window: ",
-            b["mix"].size(1) / 16000,
+            b["mix"].size(1),
+            "window (# frames): ",
+            b["mix"].size(2),
             end=" ",
         )
         loss = objective(model, b, device=device)

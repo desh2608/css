@@ -22,10 +22,9 @@ class MeanSquaredErrorPIT(torch.nn.Module):
 
     def forward(self, model, sample, device="cpu"):
         xs = sample["mix"].to(device)
-        _, y_pred = model(xs)
-        y_pred = y_pred[:, :-1, :]  # remove noise output
+        y_pred = model(xs)
 
         y1_true, y2_true = sample["source1"].to(device), sample["source2"].to(device)
-        y_true = torch.cat((y1_true, y2_true), dim=1)
-
+        y_true = torch.cat((y1_true, y2_true), dim=0).permute(1, 0, 2, 3)
+        assert y_pred.shape == y_true.shape
         return self.loss_fn(y_pred, y_true)

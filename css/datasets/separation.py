@@ -18,13 +18,12 @@
 
 import logging
 import random
-import math
 
 from lhotse import load_manifest, CutSet
 from lhotse.dataset import CutMix, ReverbWithImpulseResponse, OnTheFlyFeatures
 from lhotse.features import Spectrogram, SpectrogramConfig
+from lhotse.utils import add_durations
 
-import torch
 from torch.utils.data import IterableDataset
 
 
@@ -42,7 +41,7 @@ class ContinuousSpeechSeparationDataset(IterableDataset):
     def add_args(parser):
         parser.add_argument("--stft-frame-length", type=int, default=512)
         parser.add_argument("--stft-frame-shift", type=int, default=256)
-        parser.add_argument("--stft-window-type", default="hann")
+        parser.add_argument("--stft-window-type", default="hanning")
         parser.add_argument(
             "--min-window-size",
             type=float,
@@ -98,7 +97,7 @@ class ContinuousSpeechSeparationDataset(IterableDataset):
         self.manifest = manifest
         self.rir_manifest = rir_manifest
         self.noise_manifest = noise_manifest
-        self.batch_size = batch_size // max(1, num_workers)
+        self.batch_size = batch_size
         self.min_window_size = min_window_size
         self.max_window_size = max_window_size
         self.min_snr = min_snr
@@ -151,6 +150,9 @@ class ContinuousSpeechSeparationDataset(IterableDataset):
             )
 
     def __iter__(self):
+        return self
+
+    def __next__(self):
         """
         This method is called by the PyTorch DataLoader to generate batches of data.
         Our data generation mechanism is as follows: we sample 2 speakers from the
@@ -175,45 +177,42 @@ class ContinuousSpeechSeparationDataset(IterableDataset):
 
             # Randomly sample a start time for utterance 2
             cut2_start_time = random.uniform(0, cut1.duration)
-            cut2_end_time = cut2_start_time + cut2.duration
-            mix_end_time = max(cut1.duration, cut2_start_time + cut2.duration)
+            cut2_end_time = add_durations(
+                cut2_start_time, cut2.duration, sampling_rate=self.sampling_rate
+            )
+            mix_end_time = max(cut1.duration, cut2_end_time)
 
             if mix_end_time < window_size:
                 continue
 
             # Pad utterance 1 on the right if needed
-            cut1_padded = cut1
-            if mix_end_time > cut1.duration:
-                cut1_padded = cut1.pad(duration=mix_end_time, preserve_id=True)
+            cut1_padded = cut1.pad(duration=mix_end_time, preserve_id=True)
             # Pad utterance 2 on both sides if needed
             cut2_padded = cut2.pad(
                 duration=cut2_end_time, direction="left", preserve_id=True
             ).pad(duration=mix_end_time, direction="right", preserve_id=True)
 
-            # Just confirm that the padded utterances are of the same length as the
-            # mixture
-            assert math.isclose(
-                cut1_padded.duration, cut2_padded.duration, rel_tol=1e-04
-            ) and math.isclose(
-                cut1_padded.duration, mix_end_time, rel_tol=1e-04
-            ), f"Expected padded cuts of equal length, but are {cut1_padded.duration} and"
-            f" {cut2_padded.duration}, and mixed duration is {mix_end_time}"
+            num_windows = int(mix_end_time / window_size)
+
+            cuts_windowed = (
+                CutSet.from_cuts([cut1.mix(cut2, offset_other_by=cut2_start_time)])
+                .cut_into_windows(window_size)
+                .subset(first=num_windows)  # remove last window which may be shorter
+            )
+
+            if len(cuts_windowed) == 0:
+                continue
 
             # Chunk the padded utterances into windows and add to batch
             cuts1_padded += (
                 CutSet.from_cuts([cut1_padded])
                 .cut_into_windows(window_size)
-                .filter(lambda c: math.isclose(c.duration, window_size))
+                .subset(first=num_windows)
             )
             cuts2_padded += (
                 CutSet.from_cuts([cut2_padded])
                 .cut_into_windows(window_size)
-                .filter(lambda c: math.isclose(c.duration, window_size))
-            )
-            cuts_windowed = (
-                CutSet.from_cuts([cut1.mix(cut2, offset_other_by=cut2_start_time)])
-                .cut_into_windows(window_size)
-                .filter(lambda c: math.isclose(c.duration, window_size))
+                .subset(first=num_windows)
             )
 
             # Apply augmentation transforms
@@ -233,8 +232,8 @@ class ContinuousSpeechSeparationDataset(IterableDataset):
         y2_feats, _ = self.extractor(cuts2_padded)
 
         return {
-            "mix": torch.from_numpy(xs_feats),
-            "lens": torch.from_numpy(xs_lens),
-            "source1": torch.from_numpy(y1_feats),
-            "source2": torch.from_numpy(y2_feats),
+            "mix": xs_feats,
+            "lens": xs_lens,
+            "source1": y1_feats,
+            "source2": y2_feats,
         }

@@ -86,12 +86,13 @@ class Conformer(torch.nn.Module):
     def forward(self, f):
         """
         args
-            f: N x * x T
+            f: N x T x F
         return
-            m: [N x F x T, ...]
+            m: [N x T x F, ...]
         """
-        # N x * x T => N x T x *
-        f = f.transpose(1, 2)
+        if f.ndim == 4:
+            f = f.squeeze(0)
+        f_orig = f.clone()
 
         # global feature normalization
         f = f + self.input_bias
@@ -102,11 +103,11 @@ class Conformer(torch.nn.Module):
 
         masks = torch.sigmoid(masks)
 
-        # N x T x F => N x F x T
-        masks = masks.transpose(1, 2)
         if self.num_spk > 1:
-            masks = torch.chunk(masks, self.num_spk + self.num_noise, 1)
-        return masks, torch.tensor([m * f for m in masks])
+            masks = torch.chunk(masks, self.num_spk + self.num_noise, 2)
+
+        y_pred = torch.stack([m * f_orig for m in masks[:-1]], dim=1)
+        return y_pred
 
 
 class ConformerEncoder(torch.nn.Module):
