@@ -17,7 +17,7 @@ grad_thresh=5.0
 seed=0
 resume=
 init=
-exp_dir=exp/conformer_libri_360_lr_${lr}
+exp_dir=exp/conformer_libri_360_convtasnet
 
 . ./utils/parse_options.sh
 
@@ -50,7 +50,7 @@ fi
 train_script="train.py ${resume_opts} \
   --gpu \
   --expdir ${exp_dir} \
-  --model Conformer \
+  --model ConvTasNet \
   --objective MSE \
   --dataset CSS \
   --batch-size ${batchsize} \
@@ -69,7 +69,7 @@ train_script="train.py ${resume_opts} \
   --noise-manifest data/cuts_iso_noise.json
   "
 
-train_cmd="utils/retry.pl utils/queue-freegpu.pl --mem 12G --gpu 1 -l hostname=c* -q g.q"
+train_cmd="utils/queue-freegpu.pl --mem 12G --gpu 1 -l hostname=c1* -q g.q"
 
 train_parallel.sh ${resume_opts} \
   --cmd "$train_cmd" \

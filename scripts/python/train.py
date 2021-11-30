@@ -58,7 +58,7 @@ def parse_arguments():
     parser.add_argument(
         "--model",
         default="Conformer",
-        choices=["Conformer"],
+        choices=["Conformer", "ConvTasNet"],
     )
     parser.add_argument(
         "--objective",
@@ -139,6 +139,9 @@ def main(args):
         conf["epoch"] = 0
 
     # Prepare dataloader for training sets
+    # Check if time-domain or frequency-domain features are needed
+    use_stft = True if args.model == "Conformer" else False
+    conf["use_stft"] = use_stft
     logging.info("Defining dataset object ...")
     train_datasets = []
     for ds in conf["train_manifests"]:
@@ -150,6 +153,7 @@ def main(args):
         train_datasets,
         num_workers=args.num_workers,
         worker_init_fn=lambda x: random.seed(x + args.seed),
+        batch_size=None,
     )
 
     # Prepare dataloader for validation sets if provided
@@ -164,6 +168,7 @@ def main(args):
             valid_datasets,
             num_workers=args.num_workers,
             worker_init_fn=lambda x: random.seed(x + args.seed),
+            batch_size=None,
         )
     else:
         valid_dataloader = None
@@ -271,13 +276,19 @@ def train(
     for e in range(conf["epoch"], conf["epoch"] + args.num_epochs):
 
         avg_loss = train_one_epoch(
-            args, train_dataloader, model, objective, optimizer, lr_sched, device=device
+            args,
+            iter(train_dataloader),
+            model,
+            objective,
+            optimizer,
+            lr_sched,
+            device=device,
         )
 
         # Run validation set
         if valid_dataloader is not None:
             avg_loss_val = validate(
-                valid_dataloader,
+                iter(valid_dataloader),
                 model,
                 objective,
                 device=device,

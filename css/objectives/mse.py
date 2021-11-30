@@ -25,6 +25,6 @@ class MeanSquaredErrorPIT(torch.nn.Module):
         y_pred = model(xs)
 
         y1_true, y2_true = sample["source1"].to(device), sample["source2"].to(device)
-        y_true = torch.cat((y1_true, y2_true), dim=0).permute(1, 0, 2, 3)
+        y_true = torch.stack((y1_true, y2_true), dim=1)
         assert y_pred.shape == y_true.shape
         return self.loss_fn(y_pred, y_true)
