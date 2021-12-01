@@ -47,8 +47,9 @@ if [ ! -z $resume ]; then
   resume_opts="--resume ${resume}"
 fi 
 
+# Note: Remove `--fp16` for CLSP grid
 train_script="train.py ${resume_opts} \
-  --gpu \
+  --gpu --fp16 \
   --expdir ${exp_dir} \
   --model ConvTasNet \
   --objective MSE \
@@ -69,7 +70,8 @@ train_script="train.py ${resume_opts} \
   --noise-manifest data/cuts_iso_noise.json
   "
 
-train_cmd="utils/queue-freegpu.pl --mem 12G --gpu 1 -l hostname=c1* -q g.q"
+# For COE grid
+train_cmd="utils/queue-freegpu.pl --mem 12G --gpu 1 --config conf/gpu.conf"
 
 train_parallel.sh ${resume_opts} \
   --cmd "$train_cmd" \

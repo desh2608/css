@@ -83,6 +83,7 @@ def parse_arguments():
     parser.add_argument("--weight-decay", type=float, default=1e-08)
     # Training related config
     parser.add_argument("--gpu", action="store_true")
+    parser.add_argument("--fp16", action="store_true")
     parser.add_argument("--resume", default=None)
     parser.add_argument("--init", default=None)
     parser.add_argument("--seed", type=int, default=0)
