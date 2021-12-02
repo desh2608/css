@@ -1,3 +1,7 @@
+if [ -f env.sh ]; then
+  source env.sh
+fi
+
 # Print immediately
 export PYTHONUNBUFFERED=1
 export PYTHONPATH=${PYTHONPATH}:`pwd`/scripts/python

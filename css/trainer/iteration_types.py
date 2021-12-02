@@ -25,24 +25,40 @@ def train_one_epoch(args, generator, model, objective, optim, lr_sched, device="
 
     It defines how to use these components to perform 1 epoch of training.
     """
+    if args.gpu and args.fp16:
+        logging.info("Using fp16 operations")
+        scaler = torch.cuda.amp.GradScaler()
 
     total_loss = 0.0
 
     for i in range(1, args.batches_per_epoch + 1):
         b = next(generator)
         log = f"Iter: {i} of {args.batches_per_epoch} LR:{lr_sched.curr_lr:0.5e} bsize: {b['mix'].size(0)} window (# frames): {b['mix'].size(1)} ovl: {b['ovl']:0.4f} "
-        loss = objective(model, b, device=device)
+
+        if args.gpu and args.fp16:
+            with torch.cuda.amp.autocast():
+                loss = objective(model, b, device=device)
+        else:
+            loss = objective(model, b, device=device)
+
         log += f"Loss: {loss.data.item():0.5f} "
         total_loss += loss.data.item()
 
-        loss.backward()
+        if args.gpu and args.fp16:
+            scaler.scale(loss).backward()
+        else:
+            loss.backward()
         loss.detach()
         del b
 
         grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), args.grad_thresh)
         log += f"Grad_norm: {grad_norm.data.item():0.5f}"
         logging.info(log)
-        optim.step()
+        if args.gpu and args.fp16:
+            scaler.step(optim)
+            scaler.update()
+        else:
+            optim.step()
         optim.zero_grad()
         lr_sched.step(1.0)
     return total_loss / args.batches_per_epoch
