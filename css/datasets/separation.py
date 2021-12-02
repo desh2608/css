@@ -18,6 +18,7 @@
 
 import logging
 import random
+import numpy as np
 
 from lhotse import load_manifest, CutSet
 from lhotse.dataset import CutMix, ReverbWithImpulseResponse, OnTheFlyFeatures
@@ -113,7 +114,7 @@ class ContinuousSpeechSeparationDataset(IterableDataset):
         self.sampling_rate = self.cuts_single.sample().sampling_rate
 
         # Spectrogram config for feature extraction
-        if self.use_stft:
+        if use_stft:
             self.stft_config = SpectrogramConfig(
                 frame_length=stft_frame_length / self.sampling_rate,
                 frame_shift=stft_frame_shift / self.sampling_rate,
@@ -246,10 +247,16 @@ class ContinuousSpeechSeparationDataset(IterableDataset):
             y1_feats, _ = self.extractor(cuts1_padded)
             y2_feats, _ = self.extractor(cuts2_padded)
         else:
-            xs_feats = torch.cat(c.load_audio() for c in mix_cuts, dim = 0)
-            xs_lens = torch.tensor(c.duration for c in mix_cuts)
-            y1_feats = torch.cat(c.load_audio() for c in cuts1_padded, dim = 0) 
-            y2_feats = torch.cat(c.load_audio() for c in cuts2_padded, dim = 0)
+            xs_feats = torch.from_numpy(
+                np.concatenate([c.load_audio() for c in mix_cuts], axis=0)
+            )
+            xs_lens = torch.tensor([c.duration for c in mix_cuts])
+            y1_feats = torch.from_numpy(
+                np.concatenate([c.load_audio() for c in cuts1_padded], axis=0)
+            )
+            y2_feats = torch.from_numpy(
+                np.concatenate([c.load_audio() for c in cuts2_padded], axis=0)
+            )
 
         return {
             "mix": xs_feats,

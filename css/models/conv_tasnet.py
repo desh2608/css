@@ -23,10 +23,10 @@ class ConvTasNet(torch.nn.Module):
     def add_args(parser):
         parser.add_argument("--num-spk", type=int, default=2)
         parser.add_argument("--num-noise", type=int, default=1)
-        parser.add_argument("--conv-tasnet-num-filters", type=int, default=512)
+        parser.add_argument("--conv-tasnet-num-filters", type=int, default=256)
         parser.add_argument("--conv-tasnet-filter-length", type=int, default=16)
         parser.add_argument("--conv-tasnet-bottleneck-channels", type=int, default=128)
-        parser.add_argument("--conv-tasnet-conv-channels", type=int, default=512)
+        parser.add_argument("--conv-tasnet-conv-channels", type=int, default=256)
         parser.add_argument("--conv-tasnet-kernel-size", type=int, default=3)
         parser.add_argument("--conv-tasnet-num-blocks", type=int, default=8)
         parser.add_argument("--conv-tasnet-num-layers", type=int, default=3)
