@@ -8,6 +8,7 @@ def pit_loss(
     axis: int,
     loss_fn=torch.nn.functional.mse_loss,
     return_permutation: bool = False,
+    **kwargs,
 ):
     """
     Permutation invariant loss function. Calls `loss_fn` on every possible
@@ -28,32 +29,7 @@ def pit_loss(
         return_permutation: If `True`, this function returns the permutation
             that minimizes the loss along with the minimal loss otherwise it
             only returns the loss.
-    Examples:
-        >>> T, K, F = 4, 2, 5
-        >>> estimate, target = torch.ones(T, K, F), torch.zeros(T, K, F)
-        >>> pit_loss(estimate, target, 1)
-        tensor(1.)
-        >>> T, K, F = 4, 2, 5
-        >>> estimate, target = torch.ones(T, K, F), torch.zeros(T, F, dtype=torch.int64)
-        >>> pit_loss(estimate, target, 1, loss_fn=torch.nn.functional.cross_entropy)
-        tensor(0.6931)
-        >>> T, K, F = 4, 2, 5
-        >>> estimate, target = torch.ones(K, F, T), torch.zeros(K, F, T)
-        >>> pit_loss(estimate, target, 0)
-        tensor(1.)
-        >>> T, K, F = 4, 2, 5
-        >>> estimate = torch.stack([torch.ones(F, T), torch.zeros(F, T)])
-        >>> target = estimate[(1, 0), :, :]
-        >>> pit_loss(estimate, target, axis=0, return_permutation=True)
-        (tensor(0.), (1, 0))
-        >>> K = 5
-        >>> estimate, target = torch.ones(K), torch.zeros(K)
-        >>> pit_loss(estimate, target, axis=0)
-        tensor(1.)
-        >>> A, B, K, C, F = 4, 5, 3, 100, 128
-        >>> estimate, target = torch.ones(A, B, K, C, F), torch.zeros(A, B, K, C, F)
-        >>> pit_loss(estimate, target, axis=-3)
-        tensor(1.)
+        **kwargs: Additional arguments to pass to `loss_fn`.
     """
     sources = estimate.size()[axis]
     assert (
@@ -77,7 +53,7 @@ def pit_loss(
     permutations = list(itertools.permutations(range(sources)))
     for permutation in permutations:
         indexer[axis] = permutation
-        candidates.append(loss_fn(estimate[tuple(indexer)], target))
+        candidates.append(loss_fn(estimate[tuple(indexer)], target, **kwargs))
     min_loss, idx = torch.min(torch.stack(candidates), dim=0)
 
     if return_permutation:

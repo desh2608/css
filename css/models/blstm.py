@@ -82,10 +82,10 @@ class BLSTM(torch.nn.Module):
         f = self.blstm(f)
         masks = self.linear(f)
 
-        masks = torch.sigmoid(masks)
+        masks = torch.nn.functional.relu(masks)
         masks = torch.chunk(masks, self.num_spk + self.num_noise, -1)
         y_pred = torch.stack([m * f_orig for m in masks[:-1]], dim=1)
-        return y_pred
+        return y_pred, masks
 
 
 class BLSTMEncoder(torch.nn.Module):
@@ -144,7 +144,7 @@ class BLSTMLayer(torch.nn.Module):
             bidirectional=True,
         )
         self.layer_norm = torch.nn.LayerNorm(h_dim)
-        self.dropout = torch.nn.Dropout(dropout_rate)
+        self.dropout = torch.nn.Dropout(dropout_rate, inplace=True)
 
     def forward(self, x):
         """Compute encoded features.
