@@ -16,9 +16,7 @@ for f in modules:
                 "css.objectives." + os.path.basename(module_name)
             )
 
-OBJECTIVES = {
-    "MSE": mse.MeanSquaredErrorPIT,
-}
+OBJECTIVES = {"MSE": mse.MeanSquaredError}
 
 
 def build_objective(objectivename, conf):
