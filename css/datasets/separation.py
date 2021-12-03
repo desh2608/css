@@ -18,12 +18,14 @@
 
 import logging
 import random
+import numpy as np
 
 from lhotse import load_manifest, CutSet
 from lhotse.dataset import CutMix, ReverbWithImpulseResponse, OnTheFlyFeatures
 from lhotse.features import Spectrogram, SpectrogramConfig
 from lhotse.utils import add_durations
 
+import torch
 from torch.utils.data import IterableDataset
 
 
@@ -51,7 +53,7 @@ class ContinuousSpeechSeparationDataset(IterableDataset):
         parser.add_argument(
             "--max-window-size",
             type=float,
-            default=5,
+            default=4,
             help="Maximum window size for each batch",
         )
         parser.add_argument(
@@ -68,6 +70,7 @@ class ContinuousSpeechSeparationDataset(IterableDataset):
             rir_manifest=conf["rir_manifest"],
             noise_manifest=conf["noise_manifest"],
             batch_size=conf["batch_size"],
+            use_stft=conf["use_stft"],
             stft_frame_length=conf["stft_frame_length"],
             stft_frame_shift=conf["stft_frame_shift"],
             stft_window_type=conf["stft_window_type"],
@@ -84,6 +87,7 @@ class ContinuousSpeechSeparationDataset(IterableDataset):
         rir_manifest=None,
         noise_manifest=None,
         batch_size=32,
+        use_stft=True,
         stft_frame_length=512,
         stft_frame_shift=256,
         stft_window_type="hann",
@@ -110,13 +114,17 @@ class ContinuousSpeechSeparationDataset(IterableDataset):
         self.sampling_rate = self.cuts_single.sample().sampling_rate
 
         # Spectrogram config for feature extraction
-        self.stft_config = SpectrogramConfig(
-            frame_length=stft_frame_length / self.sampling_rate,
-            frame_shift=stft_frame_shift / self.sampling_rate,
-            window_type=stft_window_type,
-        )
+        if use_stft:
+            self.stft_config = SpectrogramConfig(
+                frame_length=stft_frame_length / self.sampling_rate,
+                frame_shift=stft_frame_shift / self.sampling_rate,
+                window_type=stft_window_type,
+            )
 
-        self.extractor = OnTheFlyFeatures(Spectrogram(self.stft_config))
+            self.extractor = OnTheFlyFeatures(Spectrogram(self.stft_config))
+        else:
+            self.extractor = None
+
         # Create dictionary from speaker ids to list of cuts
         self.cuts_by_speaker = {
             speaker_id: self.cuts_single.filter(
@@ -169,18 +177,25 @@ class ContinuousSpeechSeparationDataset(IterableDataset):
         cuts2_padded = CutSet()
         mix_cuts = CutSet()
 
+        total_length = 0
+        total_overlap = 0
         while len(mix_cuts) < self.batch_size:
             # Sample 2 cuts with different speaker ids
             spk1, spk2 = random.sample(self.speakers, 2)
             cut1 = random.choice(self.cuts_by_speaker[spk1])
             cut2 = random.choice(self.cuts_by_speaker[spk2])
+            if cut1.duration < cut2.duration:
+                # Swap cut1 and cut2 if cut1 is shorter
+                cut1, cut2 = cut2, cut1
 
             # Randomly sample a start time for utterance 2
-            cut2_start_time = random.uniform(0, cut1.duration)
+            cut2_start_time = random.uniform(0, cut1.duration / 2)
             cut2_end_time = add_durations(
                 cut2_start_time, cut2.duration, sampling_rate=self.sampling_rate
             )
             mix_end_time = max(cut1.duration, cut2_end_time)
+            total_length += mix_end_time
+            total_overlap += min(cut2.duration, cut1.duration - cut2_start_time)
 
             if mix_end_time < window_size:
                 continue
@@ -226,14 +241,27 @@ class ContinuousSpeechSeparationDataset(IterableDataset):
         cuts2_padded = cuts2_padded.subset(first=self.batch_size)
         mix_cuts = mix_cuts.subset(first=self.batch_size)
 
-        # Extract features for mixture and sources
-        xs_feats, xs_lens = self.extractor(mix_cuts)
-        y1_feats, _ = self.extractor(cuts1_padded)
-        y2_feats, _ = self.extractor(cuts2_padded)
+        if self.extractor is not None:
+            # Extract features for mixture and sources
+            xs_feats, xs_lens = self.extractor(mix_cuts)
+            y1_feats, _ = self.extractor(cuts1_padded)
+            y2_feats, _ = self.extractor(cuts2_padded)
+        else:
+            xs_feats = torch.from_numpy(
+                np.concatenate([c.load_audio() for c in mix_cuts], axis=0)
+            )
+            xs_lens = torch.tensor([c.duration for c in mix_cuts])
+            y1_feats = torch.from_numpy(
+                np.concatenate([c.load_audio() for c in cuts1_padded], axis=0)
+            )
+            y2_feats = torch.from_numpy(
+                np.concatenate([c.load_audio() for c in cuts2_padded], axis=0)
+            )
 
         return {
             "mix": xs_feats,
             "lens": xs_lens,
             "source1": y1_feats,
             "source2": y2_feats,
+            "ovl": total_overlap / total_length,
         }

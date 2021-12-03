@@ -18,6 +18,8 @@ DEFAULT_CONFORMER_CONF = {
     "relative_pos_emb": True,
 }
 
+EPSILON = torch.finfo(torch.float32).eps
+
 
 class Conformer(torch.nn.Module):
     """
@@ -68,11 +70,6 @@ class Conformer(torch.nn.Module):
     ):
         super(Conformer, self).__init__()
 
-        self.input_bias = torch.zeros(1, 1, in_features)
-        self.input_scale = torch.ones(1, 1, in_features)
-        self.input_bias = torch.nn.Parameter(self.input_bias, requires_grad=False)
-        self.input_scale = torch.nn.Parameter(self.input_scale, requires_grad=False)
-
         # Conformer Encoders
         self.conformer = ConformerEncoder(in_features, **conformer_conf)
 
@@ -94,20 +91,17 @@ class Conformer(torch.nn.Module):
             f = f.squeeze(0)
         f_orig = f.clone()
 
-        # global feature normalization
-        f = f + self.input_bias
-        f = f * self.input_scale
+        # Apply MVN
+        f = (f - f.mean(-2, keepdim=True)) / (f.std(-2, keepdim=True) + EPSILON)
 
         f, _ = self.conformer(f, masks=None)
         masks = self.linear(f)
 
-        masks = torch.sigmoid(masks)
-
-        if self.num_spk > 1:
-            masks = torch.chunk(masks, self.num_spk + self.num_noise, 2)
+        masks = torch.nn.functional.relu(masks)
+        masks = torch.chunk(masks, self.num_spk + self.num_noise, 2)
 
         y_pred = torch.stack([m * f_orig for m in masks[:-1]], dim=1)
-        return y_pred
+        return y_pred, masks
 
 
 class ConformerEncoder(torch.nn.Module):

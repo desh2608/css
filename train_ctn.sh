@@ -3,13 +3,13 @@
 # This is the top-level training script for the CSS model.
 . ./path.sh
 
-lr=0.0001
-warmup=20000
+lr=0.001
+warmup=15000
 decay=1e-05
 weight_decay=1e-02
 batches_per_epoch=500
 num_epochs=100
-nj_init=1
+nj_init=2
 nj_final=4
 batchsize=32
 num_workers=4
@@ -17,7 +17,7 @@ grad_thresh=5.0
 seed=0
 resume=
 init=
-exp_dir=exp/blstm_libri_360
+exp_dir=exp/conformer_libri_360_convtasnet
 
 . ./utils/parse_options.sh
 
@@ -47,10 +47,11 @@ if [ ! -z $resume ]; then
   resume_opts="--resume ${resume}"
 fi 
 
+# Note: Remove `--fp16` for CLSP grid
 train_script="train.py ${resume_opts} \
-  --gpu \
+  --gpu --fp16 \
   --expdir ${exp_dir} \
-  --model BLSTM \
+  --model ConvTasNet \
   --objective MSE \
   --dataset CSS \
   --batch-size ${batchsize} \
@@ -69,7 +70,8 @@ train_script="train.py ${resume_opts} \
   --noise-manifest data/cuts_iso_noise.json
   "
 
-train_cmd="utils/queue.pl --mem 12G --gpu 1 --config conf/gpu.conf"
+# For COE grid
+train_cmd="utils/queue-freegpu.pl --mem 12G --gpu 1 --config conf/gpu.conf"
 
 train_parallel.sh ${resume_opts} \
   --cmd "$train_cmd" \

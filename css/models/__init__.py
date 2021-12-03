@@ -18,6 +18,8 @@ for f in modules:
 
 MODELS = {
     "Conformer": conformer.Conformer,
+    "ConvTasNet": conv_tasnet.ConvTasNet,
+    "BLSTM": blstm.BLSTM,
 }
 
 
