@@ -14,7 +14,6 @@ setup(
     author_email="r.desh26@gmail.com",
     url="https://github.com/desh2608/torch-gss",
     keywords=["continuous speech separation"],
-    # install_requires=["lhotse>=0.12.0", "asteroid>=0.5.1"],
     classifiers=[
         "Development Status :: 4 - Beta",
         "Intended Audience :: Developers",
