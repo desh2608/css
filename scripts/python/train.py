@@ -58,12 +58,12 @@ def parse_arguments():
     parser.add_argument(
         "--model",
         default="Conformer",
-        choices=["Conformer", "ConvTasNet"],
+        choices=["Conformer", "ConvTasNet", "BLSTM"],
     )
     parser.add_argument(
         "--objective",
         default="MSE",
-        choices=["MSE"],
+        choices=["MSE", "SNR"],
     )
     parser.add_argument(
         "--dataset",
@@ -141,7 +141,7 @@ def main(args):
 
     # Prepare dataloader for training sets
     # Check if time-domain or frequency-domain features are needed
-    use_stft = True if args.model == "Conformer" else False
+    use_stft = args.model != "ConvTasNet"
     conf["use_stft"] = use_stft
     logging.info("Defining dataset object ...")
     train_datasets = []

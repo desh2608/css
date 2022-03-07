@@ -10,7 +10,7 @@ decay=1e-05
 weight_decay=1e-02
 batches_per_epoch=500
 num_epochs=100
-nj_init=2
+nj_init=1
 nj_final=4
 batchsize=32
 num_workers=4
@@ -40,7 +40,7 @@ fi
 train_script="train.py ${resume_opts} \
   --gpu --debug \
   --expdir ${exp_dir} \
-  --model Conformer \
+  --model BLSTM \
   --objective MSE \
   --dataset CSS \
   --batch-size ${batchsize} \
