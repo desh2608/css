@@ -39,7 +39,9 @@ class Beamformer:
         D, T = X.shape
         mask_ch0, mask_ch1, noise_mask = masks
 
-        X = X.squeeze(dim=0).unfold(0, self.eval_win + 256, self.eval_hop)  # B x T
+        X = X.unfold(-1, self.eval_win + 256, self.eval_hop).permute(
+            1, 0, 2
+        )  # B x D x T
         mask_ch0 = mask_ch0.unfold(1, self.mask_win, self.mask_hop).permute(1, 0, 2)
         mask_ch1 = mask_ch1.unfold(1, self.mask_win, self.mask_hop).permute(1, 0, 2)
         noise_mask = noise_mask.unfold(1, self.mask_win, self.mask_hop).permute(1, 0, 2)
@@ -124,11 +126,14 @@ class Beamformer:
     def process_one_batch(self, x, speech_mask, noise_mask):
         """
         Process one batch of wav chunks.
-        x: B x N
+        x: B x D x N
         speech_mask: B x F X T
         noise_mask: B x F x T
         Returns: beamformed wav chunks (B x F x T)
         """
+        # Convert x to 2D tensor for STFT computation
+        B, D, N = x.shape
+        x = x.reshape(B * D, N)
         S = torch.stft(
             x,
             n_fft=self.n_fft,
@@ -137,9 +142,10 @@ class Beamformer:
             onesided=True,
             window=torch.hann_window(self.n_fft),
             return_complex=True,
-        ).unsqueeze(
-            1
-        )  # B x D x F x T
+        )  # BD x F x T
+        _, F, T = S.shape
+        # Convert S back to 4D tensor with channel dimension
+        S = S.reshape(B, D, F, T)
         L = min([S.shape[-1], speech_mask.shape[-1]])
 
         target_scm = compute_scm(S[..., :L], speech_mask[..., :L].unsqueeze(1))
@@ -152,7 +158,7 @@ class Beamformer:
         )
 
         if self.rescale:
-            result = self.normalize_scale(result, S[..., :L], speech_mask[..., :L])
+            result = self.normalize_scale(result, S[:, 0, :, :L], speech_mask[..., :L])
 
         return result  # B x F x T
 
@@ -160,10 +166,9 @@ class Beamformer:
         """
         Normalize scale of the result.
         result_spec: B x F x T
-        ch0_spec: B x D x F x T
+        ch0_spec: B x F x T
         mask: B x F x T
         """
-        ch0_spec = ch0_spec.squeeze(dim=1)  # B x F x T
         masked = mask * ch0_spec  # B x F x T
 
         masked_energy = torch.sqrt(
