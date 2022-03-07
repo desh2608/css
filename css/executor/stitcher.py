@@ -15,7 +15,7 @@ class Stitcher:
 
         """
         this method use mask as stitching rule
-        x: original magnitude spectrogram features corresponding to each window
+        x: original magnitude spectrogram features corresponding to each window (expects single channel)
         masks: mask for each window (2 sources + 1 noise)
         """
         PERM = []

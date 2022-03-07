@@ -1,14 +1,12 @@
-#!/usr/bin/env python
+#!/usr/local/env python
 
 from pathlib import Path
 import argparse
 import yaml
 import logging
-import sys
 
 import torch
 import torchaudio
-import numpy as np
 
 from pathlib import Path
 
@@ -33,7 +31,7 @@ def run(args):
     recordings = manifests["recordings"]
     if args.session is not None:
         recordings = recordings.filter(lambda x: f"session{args.session}" in x.id)
-    egs_reader = EgsReader(recordings)
+    egs_reader = EgsReader(recordings, multi_channel=args.multi_channel)
 
     if args.backend == "onnx":
         import onnxruntime
@@ -69,7 +67,7 @@ def run(args):
         mixed = egs["mix"]  # (D x T)
 
         # Apply separation to get masks. The masks here will be a list of masks, each
-        # corresponding to one window
+        # corresponding to one window.
         window_masks, mag_specs = separator.separate(mixed)
 
         # Stitch window-level masks to get session-level masks
@@ -80,8 +78,8 @@ def run(args):
         wav_ch0, wav_ch1 = beamformer.continuous_process(mixed, stitched_masks)
 
         # Write out the separated audio
-        torchaudio.save(dump_dir / f"{key}_ch0.wav", wav_ch0, sampling_rate)
-        torchaudio.save(dump_dir / f"{key}_ch1.wav", wav_ch1, sampling_rate)
+        torchaudio.save(dump_dir / f"{key}_0.wav", wav_ch0, sampling_rate)
+        torchaudio.save(dump_dir / f"{key}_1.wav", wav_ch1, sampling_rate)
 
     logging.info(f"Processed {len(egs_reader)} utterances")
 
@@ -114,8 +112,8 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "--gpu",
-        type=bool,
-        default=True,
+        default=False,
+        action="store_true",
         help="Use GPU for separation",
     )
     parser.add_argument(
@@ -123,6 +121,12 @@ if __name__ == "__main__":
         type=str,
         default=None,
         help="Specify subset of sessions to process (useful for multi-GPU processing)",
+    )
+    parser.add_argument(
+        "--multi-channel",
+        default=False,
+        action="store_true",
+        help="Use multi-channel separation with MVDR beamformer",
     )
     args = parser.parse_args()
     run(args)
