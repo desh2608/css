@@ -3,8 +3,9 @@
 # This is the top-level training script for the CSS model.
 . ./path.sh
 
-lr=0.001
-warmup=15000
+stage=0
+lr=0.0001
+warmup=20000
 decay=1e-05
 weight_decay=1e-02
 batches_per_epoch=500
@@ -17,29 +18,18 @@ grad_thresh=5.0
 seed=0
 resume=
 init=
-exp_dir=exp/conformer_libri_360_lr_${lr}
+exp_dir=exp/train_conformer_librimix
 
 . ./utils/parse_options.sh
+
+corpus_dir=/export/c07/draj/sim-LibriMix
 
 set -euo pipefail
 
 # Prepare the data in the form of Lhotse manifests.
-if [ ! -f data/cuts_train-clean-360.json ]; then
+if [ $stage -le 0 ]; then
   echo "Preparing the data..."
-  lhotse prepare librispeech -p train-clean-360 -p dev-clean \
-    /export/corpora5/LibriSpeech data
-
-  # Prepare cut manifests for train and dev
-  echo "Preparing cut manifests for train and dev..."
-  lhotse cut simple -r data/recordings_train-clean-360.json -s data/supervisions_train-clean-360.json \
-    data/cuts_train-clean-360.json
-  lhotse cut simple -r data/recordings_dev-clean.json -s data/supervisions_dev-clean.json \
-    data/cuts_dev-clean.json
-
-  # Prepare RIRs and noise manifests (we use real RIRs with isotropic noises)
-  echo "Preparing RIRs and noise manifests..."
-  lhotse prepare rir-noise -p sim_rir -p iso_noise /export/c01/corpora6/RIRS_NOISES data/
-  lhotse cut simple -r data/recordings_iso_noise.json data/cuts_iso_noise.json
+  
 fi
 
 resume_opts=
@@ -48,7 +38,7 @@ if [ ! -z $resume ]; then
 fi 
 
 train_script="train.py ${resume_opts} \
-  --gpu \
+  --gpu --debug \
   --expdir ${exp_dir} \
   --model Conformer \
   --objective MSE \
@@ -62,14 +52,10 @@ train_script="train.py ${resume_opts} \
   --optim adam \
   --batches-per-epoch ${batches_per_epoch} \
   --num-epochs 1 \
-  --grad-thresh ${grad_thresh} \
-  --train-manifests data/cuts_train-clean-360.json \
-  --dev-manifests data/cuts_dev-clean.json \
-  --rir-manifest data/recordings_sim_rir.json \
-  --noise-manifest data/cuts_iso_noise.json
+  --grad-thresh ${grad_thresh}
   "
 
-train_cmd="utils/retry.pl utils/queue-freegpu.pl --mem 12G --gpu 1 -l hostname=c* -q g.q"
+train_cmd="utils/queue-freegpu.pl --mem 12G --gpu 1 -l 'hostname=c*"
 
 train_parallel.sh ${resume_opts} \
   --cmd "$train_cmd" \

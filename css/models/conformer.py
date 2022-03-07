@@ -100,12 +100,9 @@ class Conformer(torch.nn.Module):
 
         f, _ = self.conformer(f, masks=None)
         masks = self.linear(f)
-
         masks = torch.sigmoid(masks)
-
         if self.num_spk > 1:
             masks = torch.chunk(masks, self.num_spk + self.num_noise, 2)
-
         y_pred = torch.stack([m * f_orig for m in masks[:-1]], dim=1)
         return y_pred
 
