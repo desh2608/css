@@ -1,7 +1,7 @@
 #!/bin/bash
 # This script is taken from Matthew Wiesner's nnet_pytorch repository: 
 # https://github.com/m-wiesner/nnet_pytorch/blob/conda_install/nnet_pytorch/utils/train_async_parallel.sh
-# It is a naive method to to distributed training on SGE cluster.
+# It is a naive method to to distributed training on SGE cluster without DDP.
 . ./path.sh
 
 # Training (batch and gpu configs)
@@ -19,6 +19,7 @@ keep_last=2
 
 set -eo pipefail
 
+echo "$0 $@"  # Print the command line for logging
 if [ $# -ne 2 ]; then
   echo "Usage: ./train_parallel.sh <train_script> <odir>"
   exit 1; 
@@ -54,13 +55,13 @@ fi
 [ -f ${odir}/.error ] && rm ${odir}/.error
 
 for e in `seq ${start_epoch} ${num_epochs}`; do
-  nj=`echo ${num_epochs} ${nj_final} ${nj_init} ${e} | awk '{print int($4*($2-$3)/$1) + $3}'`
+  nj=`echo ${num_epochs} ${nj_final} ${nj_init} ${e} | awk '{printf "%.0f", ($4*($2-$3)/$1) + $3}'`
   epoch_seed=`echo $nj $e $seed | awk '{print ($3+1)*$1*($2-1) + 1}'`
   (
     for j in `seq 1 ${nj}`; do
       job_seed=$(($epoch_seed + $j))
       ${cmd} ${odir}/log/train.${e}.${j}.log \
-        ${train_script} --job ${j} --seed ${job_seed} ${init_opts} ${resume_opts} || touch ${odir}/.error &
+        ${train_script} --job ${j} --nj $nj --seed ${job_seed} ${init_opts} ${resume_opts} || touch ${odir}/.error &
       sleep 10  # Sleep to avoid submitting multiple jobs to same GPU
     done
     wait

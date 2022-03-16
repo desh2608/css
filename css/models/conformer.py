@@ -16,6 +16,7 @@ DEFAULT_CONFORMER_CONF = {
     "kernel_size": 33,
     "dropout_rate": 0.1,
     "relative_pos_emb": True,
+    "causal": False,
 }
 
 EPSILON = torch.finfo(torch.float32).eps
@@ -26,78 +27,59 @@ class Conformer(torch.nn.Module):
     Conformer model
     """
 
-    @staticmethod
-    def add_args(parser):
-        parser.add_argument("--idim", type=int, default=257)
-        parser.add_argument("--num-bins", type=int, default=257)
-        parser.add_argument("--num-spk", type=int, default=2)
-        parser.add_argument("--num-noise", type=int, default=1)
-        parser.add_argument("--conformer-attention-dim", type=str, default=256)
-        parser.add_argument("--conformer-attention-heads", type=int, default=4)
-        parser.add_argument("--conformer-linear-units", type=int, default=1024)
-        parser.add_argument("--conformer-num-blocks", type=int, default=16)
-        parser.add_argument("--conformer-kernel-size", type=int, default=33)
-        parser.add_argument("--conformer-dropout-rate", type=float, default=0.1)
-        parser.add_argument("--conformer-relative-pos-emb", type=bool, default=True)
-
     @classmethod
     def build_model(cls, conf):
-        conformer_conf = {
-            "attention_dim": int(conf["conformer_attention_dim"]),
-            "attention_heads": int(conf["conformer_attention_heads"]),
-            "linear_units": int(conf["conformer_linear_units"]),
-            "num_blocks": int(conf["conformer_num_blocks"]),
-            "kernel_size": int(conf["conformer_kernel_size"]),
-            "dropout_rate": float(conf["conformer_dropout_rate"]),
-            "relative_pos_emb": bool(conf["conformer_relative_pos_emb"]),
-        }
-        model = Conformer(
-            in_features=conf["idim"],
-            num_bins=conf["num_bins"],
-            num_spk=conf["num_spk"],
-            num_noise=conf["num_noise"],
-            conformer_conf=conformer_conf,
-        )
+        conf_dict = DEFAULT_CONFORMER_CONF
+        conf_dict.update(conf)
+        model = Conformer(**conf_dict)
         return model
 
     def __init__(
         self,
-        in_features=257,
+        idim=257,
         num_bins=257,
         num_spk=2,
         num_noise=1,
-        conformer_conf=DEFAULT_CONFORMER_CONF,
+        attention_dim=256,
+        attention_heads=4,
+        linear_units=1024,
+        num_blocks=16,
+        kernel_size=33,
+        dropout_rate=0.1,
+        causal=False,
+        relative_pos_emb=True,
     ):
         super(Conformer, self).__init__()
 
         # Conformer Encoders
-        self.conformer = ConformerEncoder(in_features, **conformer_conf)
-
-        self.num_bins = num_bins
+        self.conformer = ConformerEncoder(
+            idim=idim,
+            attention_dim=attention_dim,
+            attention_heads=attention_heads,
+            linear_units=linear_units,
+            num_blocks=num_blocks,
+            kernel_size=kernel_size,
+            dropout_rate=dropout_rate,
+            causal=causal,
+            relative_pos_emb=relative_pos_emb,
+        )
         self.num_spk = num_spk
         self.num_noise = num_noise
-        self.linear = torch.nn.Linear(
-            conformer_conf["attention_dim"], num_bins * (num_spk + num_noise)
-        )
+        self.num_bins = num_bins
+        self.linear = torch.nn.Linear(attention_dim, num_bins * (num_spk + num_noise))
 
     def forward(self, f):
         """
         args
-            f: N x T x F
+            f: B x T x F
         return
-            m: [N x T x F, ...]
+            m: [B x T x F, ...]
         """
-        if f.ndim == 4:
-            f = f.squeeze(0)
-        f_orig = f.clone()
-
         f, _ = self.conformer(f, masks=None)
         masks = self.linear(f)
         masks = torch.nn.functional.relu(masks)
-        if self.num_spk > 1:
-            masks = torch.chunk(masks, self.num_spk + self.num_noise, 2)
-        y_pred = torch.stack([m * f_orig for m in masks[:-1]], dim=1)
-        return y_pred, masks
+        masks = torch.chunk(masks, self.num_spk + self.num_noise, 2)
+        return masks
 
 
 class ConformerEncoder(torch.nn.Module):

@@ -4,60 +4,42 @@
 . ./path.sh
 
 stage=0
-lr=0.0001
-warmup=20000
-decay=1e-05
-weight_decay=1e-02
-batches_per_epoch=500
-num_epochs=100
-nj_init=1
-nj_final=4
-batchsize=32
-num_workers=4
-grad_thresh=5.0
+num_epochs=20
 seed=0
 resume=
 init=
-exp_dir=exp/train_conformer_librimix
+nj_init=1
+nj_final=4
+exp_dir=exp/debug_conformer_librimix
+config_file=conf/train_conformer_7ch.yaml
+
+# Command for training
+train_cmd="queue-freegpu.pl --config conf/gpu.conf --gpu 1 --mem 6G"
 
 . ./utils/parse_options.sh
 
-corpus_dir=/export/c07/draj/sim-LibriMix
-
 set -euo pipefail
-
-# Prepare the data in the form of Lhotse manifests.
-if [ $stage -le 0 ]; then
-  echo "Preparing the data..."
-  
-fi
 
 resume_opts=
 if [ ! -z $resume ]; then
   resume_opts="--resume ${resume}"
-fi 
+fi
+
+init_opts=
+if [ ! -z $init ]; then
+  init_opts="--init ${init}"
+fi
 
 train_script="train.py ${resume_opts} \
-  --gpu --debug \
+  --gpu \
+  --config ${config_file} \
   --expdir ${exp_dir} \
-  --model BLSTM \
-  --objective MSE \
-  --dataset CSS \
-  --batch-size ${batchsize} \
-  --num-workers ${num_workers} \
-  --warmup ${warmup} \
-  --decay ${decay} \
-  --weight-decay ${weight_decay} \
-  --lr ${lr} \
-  --optim adam \
-  --batches-per-epoch ${batches_per_epoch} \
   --num-epochs 1 \
-  --grad-thresh ${grad_thresh}
-  "
+"
 
-train_cmd="utils/queue-freegpu.pl --mem 12G --gpu 1 -l 'hostname=c*"
+echo $train_script
 
-train_parallel.sh ${resume_opts} \
+train_parallel.sh ${resume_opts} ${init_opts} \
   --cmd "$train_cmd" \
   --nj-init ${nj_init} \
   --nj-final ${nj_final} \

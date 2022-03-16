@@ -30,7 +30,7 @@ def init_kernel(frame_len, round_pow_of_two=True):
     return K
 
 
-class STFT:
+class STFT(nn.Module):
     """
     Short-time Fourier Transform as a Layer
     """
@@ -69,7 +69,7 @@ class STFT:
         # else reshape BD x 1 x N
         else:
             B, D, N = x.shape
-            x = x.view(B * D, 1, N)
+            x = x.contiguous().view(B * D, 1, N)
             # BD x 2F x T
             c = F.conv1d(x, self.K, stride=self.stride, padding=0)
             # B x D x 2F x T
@@ -157,7 +157,7 @@ class FeatureExtractor(nn.Module):
         """
         Compute spectral and spatial features
         args
-            x: B x N
+            x: B x D x N
         return:
             mag & pha: B x F x T
             feature: B x * x T

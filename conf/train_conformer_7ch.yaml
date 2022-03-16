@@ -1,0 +1,49 @@
+# config for training multi-channel conformer model
+trainer:
+  optimizer: "adam"
+  lr: 1.0e-3
+  min_lr: 1.0e-6
+  decay: 1.0e-2
+  weight_decay: 1.0e-5
+  warmup: 5000
+  grad_thresh: 5.0
+
+objective:
+  objective_type: "mse"
+  reduction: "sum"
+
+model:
+  num_spk: 2
+  num_noise: 1
+  model_type: "conformer"
+  num_blocks: 16
+  attention_heads: 4
+  attention_dim: 256
+  linear_units: 1024
+  kernel_size: 33
+  dropout_rate: 0.1
+
+feature:
+  frame_length: 512
+  frame_shift: 256
+  ipd: 1,0;2,0;3,0;4,0;5,0;6,0
+  idim: 1799
+  num_bins: 257
+
+# Uncomment the following for on-the-fly feature extraction
+# data:
+#   feature: "on_the_fly"
+#   train_json: "/export/c07/draj/sim-LibriMix/data/SimLibriUttmix-train/mixlog.json"
+#   valid_json: "/export/c07/draj/sim-LibriMix/data/SimLibriUttmix-dev/mixlog.json"
+#   sample_rate: 16000
+data:
+  feature: "precomputed"
+  train_dir: "data/train"
+  valid_dir: "data/valid"
+  sample_rate: 16000
+
+dataloader:
+  shuffle: true
+  batch_size: 8
+  num_workers: 4
+  drop_last: false

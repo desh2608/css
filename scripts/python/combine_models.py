@@ -28,8 +28,14 @@ def main():
     args = parser.parse_args()
 
     conf = json.load(open(args.conf))
-    new_model = models.MODELS[conf["model"]].build_model(conf)
-    objective = objectives.OBJECTIVES[conf["objective"]].build_objective(conf)
+    conf["model"]["idim"] = conf["feature"]["idim"]
+    conf["model"]["num_bins"] = conf["feature"]["num_bins"]
+    new_model = models.MODELS[conf["model"].pop("model_type")].build_model(
+        conf["model"]
+    )
+    objective = objectives.OBJECTIVES[
+        conf["objective"]["objective_type"]
+    ].build_objective(conf["objective"])
 
     params = list(
         filter(
@@ -38,15 +44,18 @@ def main():
         )
     )
 
-    optimizers = {
-        "sgd": torch.optim.SGD(params, lr=conf["lr"], momentum=0.0),
-        "adadelta": torch.optim.Adadelta(params, lr=conf["lr"]),
-        "adam": torch.optim.Adam(
-            params, lr=conf["lr"], weight_decay=conf["weight_decay"]
-        ),
-    }
-
-    optimizer = optimizers[conf["optim"]]
+    if conf["trainer"]["optimizer"] == "adam":
+        optimizer = torch.optim.Adam(
+            params,
+            lr=conf["trainer"]["lr"],
+            weight_decay=conf["trainer"].get("weight_decay", 0),
+        )
+    elif conf["trainer"]["optimizer"] == "sgd":
+        optimizer = torch.optim.SGD(
+            params,
+            lr=conf["trainer"]["lr"],
+            momentum=conf["trainer"].get("momentum", 0),
+        )
 
     new_mdl_dict = new_model.state_dict()
     new_optim_dict = optimizer.state_dict()
@@ -98,6 +107,7 @@ def main():
         "optimizer": state_dict["optimizer"],
         "lr_sched": state_dict["lr_sched"],
         "epoch": state_dict["epoch"],
+        "global_step": state_dict["global_step"],
     }
 
     torch.save(

@@ -7,6 +7,8 @@
 import logging
 import torch
 
+from css.utils.tensorboard_utils import make_grid_from_tensors
+
 logging.basicConfig(
     format="%(asctime)s %(levelname)-8s %(message)s",
     level=logging.INFO,
@@ -14,7 +16,18 @@ logging.basicConfig(
 )
 
 
-def train_one_epoch(args, generator, model, objective, optim, lr_sched, device="cpu"):
+def train_one_epoch(
+    conf,
+    dataloader,
+    model,
+    feat,
+    objective,
+    optim,
+    lr_sched,
+    device,
+    writer,
+    global_step,
+):
     """
     The training interator: It takes
          - a data loader
@@ -25,53 +38,94 @@ def train_one_epoch(args, generator, model, objective, optim, lr_sched, device="
 
     It defines how to use these components to perform 1 epoch of training.
     """
-    if args.gpu and args.fp16:
-        logging.info("Using fp16 operations")
-        scaler = torch.cuda.amp.GradScaler()
-
     total_loss = 0.0
+    num_batches = len(dataloader)
 
-    for i in range(1, args.batches_per_epoch + 1):
-        b = next(generator)
-        log = f"Iter: {i} of {args.batches_per_epoch} LR:{lr_sched.curr_lr:0.5e} bsize: {b['mix'].size(0)} window (# frames): {b['mix'].size(1)} ovl: {b['ovl']:0.4f} "
+    for i, b in enumerate(dataloader):
+        global_step += 1
+        log = f"Iter: {i} of {num_batches} LR:{lr_sched.curr_lr:0.5e} "
 
-        if args.gpu and args.fp16:
-            with torch.cuda.amp.autocast():
-                loss = objective(model, b, device=device)
+        if feat is not None:
+            # Feature extraction
+            mix_stft, f, _, _ = feat.forward(b["mix"].to(device))
+            targets_stft = torch.stack(
+                [feat.forward(t.to(device))[0] for t in b["targets"]], dim=1
+            )
+            batch = {
+                "mix": mix_stft.transpose(1, 2),  # B x T x F
+                "targets": targets_stft.transpose(2, 3),  # B x 3 x T x F
+                "feats": f.transpose(1, 2),  # B x T x *
+                "len": b["len"].to(device),
+            }
         else:
-            loss = objective(model, b, device=device)
+            batch = {
+                "mix": b["mix"],  # B x T x F
+                "targets": torch.stack(
+                    [b[src] for src in ["src0", "src1", "noise"]], dim=1
+                ),  # B x 3 x T x F
+                "feats": b["feats"],  # B x T x *
+                "len": b["len"],
+            }
+
+        if i % conf["tensorboard"]["log_interval"] == 0:
+            loss, tensors = objective(model, batch, device=device, return_est=True)
+            grids = make_grid_from_tensors(
+                tensors, num_samples=conf["tensorboard"]["num_samples"]
+            )
+            for key, grid in grids.items():
+                writer.add_image(key, grid, global_step=global_step)
+        else:
+            loss = objective(model, batch, device=device)
 
         log += f"Loss: {loss.data.item():0.5f} "
         total_loss += loss.data.item()
 
-        if args.gpu and args.fp16:
-            scaler.scale(loss).backward()
-        else:
-            loss.backward()
+        loss.backward()
         loss.detach()
         del b
 
-        grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), args.grad_thresh)
+        grad_norm = torch.nn.utils.clip_grad_norm_(
+            model.parameters(), conf["trainer"]["grad_thresh"]
+        )
         log += f"Grad_norm: {grad_norm.data.item():0.5f}"
         logging.info(log)
-        if args.gpu and args.fp16:
-            scaler.step(optim)
-            scaler.update()
-        else:
-            optim.step()
+
+        writer.add_scalar("loss/train", loss.data.item(), global_step=global_step)
+        optim.step()
         optim.zero_grad()
         lr_sched.step(1.0)
-    return total_loss / args.batches_per_epoch
+    return total_loss / num_batches, global_step
 
 
-def validate(generator, model, objective, device="cpu"):
+def validate(dataloader, model, feat, objective, device):
     model.eval()
     with torch.no_grad():
         avg_loss = 0.0
-        for _ in range(100):  # 100 batches of size 32
-            b = next(generator)
-            avg_loss += objective(model, b, device=device)
-        avg_loss /= 100
+        num_batches = len(dataloader)
+        for b in dataloader:
+            if feat is not None:
+                # Feature extraction
+                mix_stft, f, _, _ = feat.forward(b["mix"].to(device))
+                targets_stft = torch.stack(
+                    [feat.forward(t.to(device))[0] for t in b["targets"]], dim=1
+                )
+                batch = {
+                    "mix": mix_stft.transpose(1, 2),  # B x T x F
+                    "targets": targets_stft.transpose(2, 3),  # B x 3 x T x F
+                    "feats": f.transpose(1, 2),  # B x T x *
+                    "len": b["len"].to(device),
+                }
+            else:
+                batch = {
+                    "mix": b["mix"].to(device),  # B x T x F
+                    "targets": torch.stack(
+                        [b[src].to(device) for src in ["src0", "src1", "noise"]], dim=1
+                    ),  # B x 3 x T x F
+                    "feats": b["feats"].to(device),  # B x T x *
+                    "len": b["len"].to(device),
+                }
+            avg_loss += objective(model, batch, device=device)
+        avg_loss /= num_batches
         print()
     model.train()
     return avg_loss

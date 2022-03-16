@@ -19,73 +19,50 @@ class BLSTM(torch.nn.Module):
     BLSTM model
     """
 
-    @staticmethod
-    def add_args(parser):
-        parser.add_argument("--idim", type=int, default=257)
-        parser.add_argument("--num-bins", type=int, default=257)
-        parser.add_argument("--num-spk", type=int, default=2)
-        parser.add_argument("--num-noise", type=int, default=1)
-        parser.add_argument("--blstm-hdim", type=int, default=1024)
-        parser.add_argument("--blstm-num-layers", type=int, default=3)
-        parser.add_argument("--blstm-dropout-rate", type=float, default=0.1)
-
     @classmethod
     def build_model(cls, conf):
-        blstm_conf = {
-            "hidden_dim": int(conf["blstm_hdim"]),
-            "num_layers": int(conf["blstm_num_layers"]),
-            "dropout_rate": float(conf["blstm_dropout_rate"]),
-        }
-        model = BLSTM(
-            in_features=conf["idim"],
-            num_bins=conf["num_bins"],
-            num_spk=conf["num_spk"],
-            num_noise=conf["num_noise"],
-            blstm_conf=blstm_conf,
-        )
+        conf_dict = DEFAULT_BLSTM_CONF
+        conf_dict.update(conf)
+        model = BLSTM(**conf_dict)
         return model
 
     def __init__(
         self,
-        in_features=257,
+        idim=257,
         num_bins=257,
         num_spk=2,
         num_noise=1,
-        blstm_conf=DEFAULT_BLSTM_CONF,
+        hidden_dim=512,
+        num_layers=4,
+        dropout_rate=0.1,
     ):
         super(BLSTM, self).__init__()
 
         # BLSTM Encoders
-        self.blstm = BLSTMEncoder(in_features, **blstm_conf)
+        self.blstm = BLSTMEncoder(
+            idim=idim,
+            hidden_dim=hidden_dim,
+            num_layers=num_layers,
+            dropout_rate=dropout_rate,
+        )
 
-        self.num_bins = num_bins
         self.num_spk = num_spk
         self.num_noise = num_noise
-        self.linear = torch.nn.Linear(
-            blstm_conf["hidden_dim"], num_bins * (num_spk + num_noise)
-        )
+        self.num_bins = num_bins
+        self.linear = torch.nn.Linear(hidden_dim, num_bins * (num_spk + num_noise))
 
     def forward(self, f):
         """
         args
-            f: N x T x F
+            f: B x T x F
         return
-            m: [N x T x F, ...]
+            m: [B x T x F, ...]
         """
-        if f.ndim == 4:
-            f = f.squeeze(0)
-        f_orig = f.clone().detach()
-
-        # MVN
-        f = (f - f.mean(-2, keepdim=True)) / (f.std(-2, keepdim=True) + EPSILON)
-
         f = self.blstm(f)
         masks = self.linear(f)
-
         masks = torch.nn.functional.relu(masks)
-        masks = torch.chunk(masks, self.num_spk + self.num_noise, -1)
-        y_pred = torch.stack([m * f_orig for m in masks[:-1]], dim=1)
-        return y_pred, masks
+        masks = torch.chunk(masks, self.num_spk + self.num_noise, 2)
+        return masks
 
 
 class BLSTMEncoder(torch.nn.Module):

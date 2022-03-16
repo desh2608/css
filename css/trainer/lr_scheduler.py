@@ -4,29 +4,32 @@
 
 import math
 
+DEFAULT_LR_SCHEDULER_CONFIG = {
+    "warmup": 0,
+    "decay": 0.0,
+    "fixed": 0,
+    "min_lr": 1.0e-9
+}
+
 
 class LRScheduler(object):
-    @staticmethod
-    def add_args(parser):
-        parser.add_argument("--warmup", type=int, default=0)
-        parser.add_argument("--decay", type=float, default=0.0)
-        parser.add_argument("--fixed", type=int, default=0)
-        parser.add_argument("--min-lr", type=float, default=1e-09)
-
-    def __init__(self, optimizer, args):
+    def __init__(self, optimizer, conf):
+        lr_conf = DEFAULT_LR_SCHEDULER_CONFIG
+        lr_conf.update(conf)
+        
         self.optimizer = optimizer
-        self.warmup = args.warmup
-        self.fixed = args.fixed
-        self.decay = args.decay
-        self.min_lr = args.min_lr
+        self.warmup = lr_conf["warmup"]
+        self.fixed = lr_conf["fixed"]
+        self.decay = lr_conf["decay"]
+        self.min_lr = lr_conf["min_lr"]
 
         self.num_warmup_updates = 0
         self.num_fixed_updates = 0
         self.num_decay_updates = 0
         self.lr = self.optimizer.param_groups[0]["lr"]
         if self.warmup > 0:
-            self.set_lr(args.min_lr)
-            self.curr_lr = args.min_lr
+            self.set_lr(self.min_lr)
+            self.curr_lr = self.min_lr
         else:
             self.curr_lr = self.lr
 
