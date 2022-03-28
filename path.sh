@@ -9,9 +9,9 @@ export PATH=$PWD/utils/:$KALDI_ROOT/tools/openfst/bin:$KALDI_ROOT/tools/sph2pipe
 
 # Print immediately
 export PYTHONUNBUFFERED=1
-export PYTHONPATH=${PYTHONPATH}:`pwd`/scripts/python
+export PYTHONPATH=${PYTHONPATH}:`pwd`/pyscripts
 
-export PATH=${PATH}:`pwd`/scripts/bash:`pwd`/scripts/python
+export PATH=${PATH}:`pwd`/pyscripts
 export PATH=${PATH}:`pwd`/utils
 
 # Activate environment

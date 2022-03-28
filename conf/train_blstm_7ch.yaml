@@ -5,7 +5,7 @@ trainer:
   min_lr: 1.0e-6
   decay: 1.0e-2
   weight_decay: 1.0e-5
-  warmup: 5000
+  warmup: 10000
   grad_thresh: 5.0
 
 objective:
@@ -41,8 +41,8 @@ data:
 
 dataloader:
   shuffle: true
-  batch_size: 16
-  num_workers: 4
+  batch_size: 48
+  num_workers: 12
   drop_last: false
 
 tensorboard:

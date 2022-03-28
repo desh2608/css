@@ -66,7 +66,7 @@ if [ $stage -le 3 ]; then
     
     log "Extracting features for ${part}"
     $cuda_cmd JOB=1:${nj} exp/log/prepare_${part}/extract.JOB.log \
-      python scripts/python/extract_feats.py \
+      python pyscripts/extract_feats.py \
         --data data/$part/split${nj}/data.JOB.jsonl \
         --config $config_file \
         --dump_name $dump_dir/${part}_raw \
@@ -89,11 +89,11 @@ if [ $stage -le 4 ]; then
 fi
 
 if [ $stage -le 5 ]; then
-  log "Computing CMVN stats"
+  log "Creating FFCV dataset"
   for part in train valid; do
-    for key in mix feats src0 src1 noise; do
-      compute-cmvn-stats scp:data/$part/$key.scp \
-        ark:data/$part/cmvn_$key.ark
-    done
+    python pyscripts/create_ffcv_dataset.py \
+      --data_dir data/$part \
+      --out_path $dump_dir \
+      --num_workers 8
   done
 fi

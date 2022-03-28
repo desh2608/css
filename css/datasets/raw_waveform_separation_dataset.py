@@ -31,10 +31,9 @@ class RawWaveformSeparationDataset(Dataset):
     },
     """
 
-    def __init__(self, mix_json, job=1, nj=1):
+    def __init__(self, mix_json):
         with open(mix_json, "r") as f:
             self.mix_dict = json.load(f)
-        self.mix_dict = self.mix_dict[job-1::nj]
         self.num_sources = 3
 
     def __len__(self):

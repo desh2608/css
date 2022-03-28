@@ -97,6 +97,12 @@ if __name__ == "__main__":
         default=str(default_cfg),
         help="CSS configuration file.",
     )
+    parser.add_argument(
+        "--train-config",
+        metavar="<yaml-file>",
+        default=None,
+        help="CSS configuration file for training (will be used to initialize model).",
+    )
     parser.add_argument("--corpus-dir", type=str, help="Directory of LibriCSS corpus")
     parser.add_argument(
         "--num_spks", type=int, default=2, help="Number of the speakers"

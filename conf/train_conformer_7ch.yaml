@@ -5,7 +5,7 @@ trainer:
   min_lr: 1.0e-6
   decay: 1.0e-2
   weight_decay: 1.0e-5
-  warmup: 5000
+  warmup: 10000
   grad_thresh: 5.0
 
 objective:
@@ -44,6 +44,11 @@ data:
 
 dataloader:
   shuffle: true
-  batch_size: 8
-  num_workers: 4
+  batch_size: 16
+  num_workers: 8
   drop_last: false
+
+tensorboard:
+  log_dir: "tb_logs"
+  log_interval: 1000  # Set to -1 to disable printing STFTs
+  num_samples: 4

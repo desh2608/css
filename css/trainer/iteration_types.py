@@ -67,7 +67,7 @@ def train_one_epoch(
                 "len": b["len"],
             }
 
-        if i % conf["tensorboard"]["log_interval"] == 0:
+        if i % conf["tensorboard"]["log_interval"] == 0 and writer is not None:
             loss, tensors = objective(model, batch, device=device, return_est=True)
             grids = make_grid_from_tensors(
                 tensors, num_samples=conf["tensorboard"]["num_samples"]
@@ -88,9 +88,10 @@ def train_one_epoch(
             model.parameters(), conf["trainer"]["grad_thresh"]
         )
         log += f"Grad_norm: {grad_norm.data.item():0.5f}"
-        logging.info(log)
 
-        writer.add_scalar("loss/train", loss.data.item(), global_step=global_step)
+        if writer is not None:
+            writer.add_scalar("loss/train", loss.data.item(), global_step=global_step)
+            logging.info(log)
         optim.step()
         optim.zero_grad()
         lr_sched.step(1.0)

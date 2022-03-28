@@ -7,10 +7,16 @@ import argparse
 import json
 import random
 import logging
+from pathlib import Path
 
 import numpy as np
 import torch
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, DistributedSampler
+
+from torch.nn.parallel import DistributedDataParallel as DDP
+import torch.multiprocessing as mp
+import torch.distributed as dist
+
 from tensorboardX import SummaryWriter
 
 import css.models as models
@@ -33,27 +39,45 @@ parser.add_argument("--fp16", action="store_true")
 parser.add_argument("--resume", default=None)
 parser.add_argument("--init", default=None)
 parser.add_argument("--seed", type=int, default=0)
-parser.add_argument("--job", type=int, default=1)
-parser.add_argument("--nj", type=int, default=1)
 parser.add_argument("--gpu", action="store_true", default=False)
 parser.add_argument("--num-epochs", type=int, default=10)
+parser.add_argument("--world-size", type=int, default=1)
+parser.add_argument("--master-port", type=int, default=12354)
+
+torch.set_num_threads(1)
+torch.set_num_interop_threads(1)
 
 
-def main(conf):
+def setup_dist(rank, world_size, master_port=None):
+    os.environ["MASTER_ADDR"] = "localhost"
+    os.environ["MASTER_PORT"] = "12354" if master_port is None else str(master_port)
+    dist.init_process_group("nccl", rank=rank, world_size=world_size)
+    torch.cuda.set_device(rank)
 
-    device = torch.device("cuda" if conf["gpu"] else "cpu")
-    _ = torch.ones(1).to(device)
+
+def cleanup_dist():
+    dist.destroy_process_group()
+
+
+def main(rank, world_size, conf):
 
     # Set the random seed
     torch.manual_seed(conf["seed"])
     random.seed(conf["seed"])
     np.random.seed(conf["seed"])
 
+    if world_size > 1:
+        setup_dist(rank, world_size, conf["master_port"])
+
+    device = torch.device("cpu")
+    if torch.cuda.is_available():
+        device = torch.device("cuda", rank)
+
     # Create the conf file if it doesn't exist
-    if not os.path.exists("{}/conf.{}.json".format(conf["expdir"], conf["job"])):
+    if not os.path.exists("{}/conf.json".format(conf["expdir"])):
         json.dump(
             conf,
-            open("{}/conf.{}.json".format(conf["expdir"], conf["job"]), "w"),
+            open("{}/conf.json".format(conf["expdir"]), "w"),
             indent=4,
             separators=(",", ": "),
         )
@@ -62,9 +86,7 @@ def main(conf):
     # Resume training with same configuration / dump training configurations
     if conf["resume"] is not None:
         print("Loading former training configurations ...")
-        old_conf = json.load(
-            open("{}/conf.{}.json".format(conf["expdir"], conf["job"]))
-        )
+        old_conf = json.load(open("{}/conf.json".format(conf["expdir"])))
         old_conf.update(conf)
         conf = old_conf
     else:
@@ -72,7 +94,7 @@ def main(conf):
         # existing, i.e. from a previous training run.
         json.dump(
             conf,
-            open("{}/conf.{}.json".format(conf["expdir"], conf["job"]), "w"),
+            open("{}/conf.json".format(conf["expdir"]), "w"),
             indent=4,
             separators=(",", ": "),
         )
@@ -93,12 +115,7 @@ def main(conf):
         )
         collate_fn = raw_waveform_collater
 
-        # Load the dataset. For the training data, we only use the part of data relevant for
-        # the current split, i.e., if we are training with 4 jobs, each of them will only use
-        # 25% of the data.
-        train_set = RawWaveformSeparationDataset(
-            conf["data"]["train_json"], job=conf["job"], nj=conf["nj"]
-        )
+        train_set = RawWaveformSeparationDataset(conf["data"]["train_json"])
         val_set = RawWaveformSeparationDataset(conf["data"]["valid_json"])
 
     elif conf["data"]["feature"] == "precomputed":
@@ -108,38 +125,46 @@ def main(conf):
         )
 
         feat = None
-        # Load the dataset. For the training data, we only use the part of data relevant for
-        # the current split, i.e., if we are training with 4 jobs, each of them will only use
-        # 25% of the data.
-        train_set = FeatureSeparationDataset(
-            conf["data"]["train_dir"], job=conf["job"], nj=conf["nj"]
-        )
+        train_set = FeatureSeparationDataset(conf["data"]["train_dir"])
         val_set = FeatureSeparationDataset(conf["data"]["valid_dir"])
         collate_fn = feature_collater
+
+    # Create distributed sampler pinned to rank
+    train_sampler = DistributedSampler(
+        train_set, num_replicas=world_size, rank=rank, shuffle=True, seed=conf["seed"]
+    )
+    val_sampler = DistributedSampler(
+        val_set, num_replicas=world_size, rank=rank, shuffle=False
+    )
 
     # Prepare dataloaders
     train_dataloader = DataLoader(
         train_set,
         batch_size=conf["dataloader"]["batch_size"],
         num_workers=conf["dataloader"]["num_workers"],
-        shuffle=True,
+        sampler=train_sampler,
+        shuffle=False,
         collate_fn=collate_fn,
+        pin_memory=True,
     )
     val_dataloader = DataLoader(
         val_set,
         batch_size=conf["dataloader"]["batch_size"],
         num_workers=conf["dataloader"]["num_workers"],
         shuffle=False,
+        sampler=val_sampler,
         collate_fn=collate_fn,
     )
 
     # Define the model
-    logging.info("Defining model ...")
+    if rank == 0:
+        logging.info("Defining model ...")
     conf["model"]["idim"] = conf["feature"]["idim"]
     conf["model"]["num_bins"] = conf["feature"]["num_bins"]
     model = models.MODELS[conf["model"].pop("model_type")].build_model(conf["model"])
     total_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
-    logging.info(f"Traning model with {total_params} parameters.")
+    if rank == 0:
+        logging.info(f"Traning model with {total_params} parameters.")
 
     # Define the objective
     objective = objectives.OBJECTIVES[
@@ -147,7 +172,8 @@ def main(conf):
     ].build_objective(conf["objective"])
 
     if conf["resume"] is not None:
-        logging.info("Resuming ...")
+        if rank == 0:
+            logging.info("Resuming ...")
         # Loads state dict
         mdl = torch.load(
             os.path.sep.join([conf["expdir"], conf["resume"]]), map_location="cpu"
@@ -160,6 +186,8 @@ def main(conf):
     if feat is not None:
         feat.to(device)
     objective.to(device)
+    if world_size > 1:
+        model = DDP(model, device_ids=[rank])
 
     # Define trainable parameters
     params = list(
@@ -206,13 +234,15 @@ def main(conf):
                 p.data.copy_(mdl["model"][name].data)
 
     # Initialize tensorboard writer (only for the first job)
-    if not os.path.exists(os.path.join(conf["expdir"], conf["tensorboard"]["log_dir"])):
-        os.mkdir(os.path.join(conf["expdir"], conf["tensorboard"]["log_dir"]))
-    writer = (
-        SummaryWriter(os.path.join(conf["expdir"], conf["tensorboard"]["log_dir"]))
-        if conf["job"] == 1
-        else None
-    )
+    if rank == 0:
+        (Path(conf["expdir"]) / conf["tensorboard"]["log_dir"]).mkdir(
+            parents=True, exist_ok=True
+        )
+        writer = SummaryWriter(
+            os.path.join(conf["expdir"], conf["tensorboard"]["log_dir"])
+        )
+    else:
+        writer = None
 
     # train
     train(
@@ -229,6 +259,10 @@ def main(conf):
     )
 
     print("Done.")
+
+    if world_size > 1:
+        torch.distributed.barrier()
+        cleanup_dist()
 
 
 def train(
@@ -250,6 +284,8 @@ def train(
     """
     global_step = conf.get("global_step", 0)
     for e in range(conf["epoch"], conf["epoch"] + conf["num_epochs"]):
+        # Important for DDP training
+        train_dataloader.sampler.set_epoch(e)
 
         avg_loss, global_step = train_one_epoch(
             conf,
@@ -273,12 +309,14 @@ def train(
                 objective,
                 device,
             )
-            logging.info(
-                f"Epoch: {e + 1} :: Avg train loss = {avg_loss}, avg. valid loss = {avg_loss_val}"
-            )
-            writer.add_scalar("loss/valid", avg_loss_val, global_step=e)
+            if writer is not None:
+                writer.add_scalar("loss/valid", avg_loss_val, global_step=e)
+                logging.info(
+                    f"Epoch: {e + 1} :: Avg train loss = {avg_loss}, avg. valid loss = {avg_loss_val}"
+                )
         else:
-            logging.info(f"Epoch: {e + 1} :: Avg train loss = {avg_loss}")
+            if writer is not None:
+                logging.info(f"Epoch: {e + 1} :: Avg train loss = {avg_loss}")
 
         # Save checkpoint
         state_dict = {
@@ -294,7 +332,7 @@ def train(
         if not np.isnan(avg_loss):
             torch.save(
                 state_dict,
-                conf["expdir"] + "/{}.{}.mdl".format(e + 1, conf["job"]),
+                conf["expdir"] + f"/{e+1}.mdl",
             )
 
 
@@ -314,4 +352,8 @@ if __name__ == "__main__":
     arg_dic, plain_args = parse_args_as_dict(parser, return_plain_args=True)
     arg_dic.update(arg_dic.pop("main_args"))
     pprint(arg_dic)
-    main(arg_dic)
+    world_size = raw_args.world_size
+    if world_size > 1:
+        mp.spawn(main, args=(world_size, arg_dic), nprocs=world_size, join=True)
+    else:
+        main(rank=0, world_size=1, args=arg_dic)
