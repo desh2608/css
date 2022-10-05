@@ -46,7 +46,8 @@ def feature_collater(data):
     """
     data is a list of dicts containing keys "mix", "src0", "src1", "noise", "feats"
     """
-    lengths = torch.LongTensor([x["mix"].shape[0] for x in data])
+    data = sorted(data, key=lambda x: x["mix"].shape[0], reverse=True)
+    lengths = torch.tensor([x["mix"].shape[0] for x in data])
     padded_batch = {
         key: pad_sequence([x[key] for x in data], batch_first=True)
         for key in ["mix", "src0", "src1", "noise", "feats"]

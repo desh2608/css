@@ -30,12 +30,6 @@ feature:
   idim: 1799
   num_bins: 257
 
-# Uncomment the following for on-the-fly feature extraction
-# data:
-#   feature: "on_the_fly"
-#   train_json: "/export/c07/draj/sim-LibriMix/data/SimLibriUttmix-train/mixlog.json"
-#   valid_json: "/export/c07/draj/sim-LibriMix/data/SimLibriUttmix-dev/mixlog.json"
-#   sample_rate: 16000
 data:
   feature: "precomputed"
   train_dir: "data/train"

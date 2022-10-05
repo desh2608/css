@@ -9,7 +9,7 @@ trainer:
   grad_thresh: 5.0
 
 objective:
-  objective_type: "mse"
+  objective_type: "huber"
   reduction: "sum"
 
 model:
@@ -27,12 +27,6 @@ feature:
   idim: 1799
   num_bins: 257
 
-# Uncomment the following for on-the-fly feature extraction
-# data:
-#   feature: "on_the_fly"
-#   train_json: "/export/c07/draj/sim-LibriMix/data/SimLibriUttmix-train/mixlog.json"
-#   valid_json: "/export/c07/draj/sim-LibriMix/data/SimLibriUttmix-dev/mixlog.json"
-#   sample_rate: 16000
 data:
   feature: "precomputed"
   train_dir: "data/train"
@@ -41,8 +35,8 @@ data:
 
 dataloader:
   shuffle: true
-  batch_size: 48
-  num_workers: 12
+  batch_size: 32  # batch size per GPU
+  num_workers: 4
   drop_last: false
 
 tensorboard:

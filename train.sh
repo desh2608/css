@@ -11,7 +11,7 @@ exp_dir=exp/train_blstm_librimix
 config_file=conf/train_blstm_7ch.yaml
 
 # Command for training
-train_cmd="queue-freegpu.pl --config conf/gpu.conf --gpu 2 --mem 8G"
+train_cmd="queue-ackgpu.pl --config conf/gpu.conf --gpu 2 --mem 20G"
 
 . ./utils/parse_options.sh
 

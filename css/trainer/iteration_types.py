@@ -5,6 +5,7 @@
 # Apache 2.0
 
 import logging
+import random
 import torch
 
 from css.utils.tensorboard_utils import make_grid_from_tensors
@@ -20,7 +21,6 @@ def train_one_epoch(
     conf,
     dataloader,
     model,
-    feat,
     objective,
     optim,
     lr_sched,
@@ -45,37 +45,16 @@ def train_one_epoch(
         global_step += 1
         log = f"Iter: {i} of {num_batches} LR:{lr_sched.curr_lr:0.5e} "
 
-        if feat is not None:
-            # Feature extraction
-            mix_stft, f, _, _ = feat.forward(b["mix"].to(device))
-            targets_stft = torch.stack(
-                [feat.forward(t.to(device))[0] for t in b["targets"]], dim=1
-            )
-            batch = {
-                "mix": mix_stft.transpose(1, 2),  # B x T x F
-                "targets": targets_stft.transpose(2, 3),  # B x 3 x T x F
-                "feats": f.transpose(1, 2),  # B x T x *
-                "len": b["len"].to(device),
-            }
-        else:
-            batch = {
-                "mix": b["mix"],  # B x T x F
-                "targets": torch.stack(
-                    [b[src] for src in ["src0", "src1", "noise"]], dim=1
-                ),  # B x 3 x T x F
-                "feats": b["feats"],  # B x T x *
-                "len": b["len"],
-            }
+        batch = {
+            "mix": b["mix"],  # B x T x F
+            "targets": torch.stack(
+                [b[src] for src in ["src0", "src1", "noise"]], dim=1
+            ),  # B x 3 x T x F
+            "feats": b["feats"],  # B x T x *
+            "len": b["len"],
+        }
 
-        if i % conf["tensorboard"]["log_interval"] == 0 and writer is not None:
-            loss, tensors = objective(model, batch, device=device, return_est=True)
-            grids = make_grid_from_tensors(
-                tensors, num_samples=conf["tensorboard"]["num_samples"]
-            )
-            for key, grid in grids.items():
-                writer.add_image(key, grid, global_step=global_step)
-        else:
-            loss = objective(model, batch, device=device)
+        loss = objective(model, batch, device=device)
 
         log += f"Loss: {loss.data.item():0.5f} "
         total_loss += loss.data.item()
@@ -98,34 +77,31 @@ def train_one_epoch(
     return total_loss / num_batches, global_step
 
 
-def validate(dataloader, model, feat, objective, device):
+def validate(dataloader, model, objective, device, writer, conf, global_step):
     model.eval()
     with torch.no_grad():
         avg_loss = 0.0
         num_batches = len(dataloader)
-        for b in dataloader:
-            if feat is not None:
-                # Feature extraction
-                mix_stft, f, _, _ = feat.forward(b["mix"].to(device))
-                targets_stft = torch.stack(
-                    [feat.forward(t.to(device))[0] for t in b["targets"]], dim=1
+        # We will plot spectrogram for a randomly selected batch (since first batch always
+        # has just 1 input in the mixture)
+        rand_batch = random.randint(0, num_batches - 1)
+        for i, b in enumerate(dataloader):
+            batch = {
+                "mix": b["mix"].to(device),  # B x T x F
+                "targets": torch.stack(
+                    [b[src].to(device) for src in ["src0", "src1", "noise"]], dim=1
+                ),  # B x 3 x T x F
+                "feats": b["feats"].to(device),  # B x T x *
+                "len": b["len"].to(device),
+            }
+            loss, tensors = objective(model, batch, device=device, return_est=True)
+            if i == rand_batch and writer is not None:
+                grids = make_grid_from_tensors(
+                    tensors, num_samples=conf["tensorboard"]["num_samples"]
                 )
-                batch = {
-                    "mix": mix_stft.transpose(1, 2),  # B x T x F
-                    "targets": targets_stft.transpose(2, 3),  # B x 3 x T x F
-                    "feats": f.transpose(1, 2),  # B x T x *
-                    "len": b["len"].to(device),
-                }
-            else:
-                batch = {
-                    "mix": b["mix"].to(device),  # B x T x F
-                    "targets": torch.stack(
-                        [b[src].to(device) for src in ["src0", "src1", "noise"]], dim=1
-                    ),  # B x 3 x T x F
-                    "feats": b["feats"].to(device),  # B x T x *
-                    "len": b["len"].to(device),
-                }
-            avg_loss += objective(model, batch, device=device)
+                for key, grid in grids.items():
+                    writer.add_image(key, grid, global_step=global_step)
+            avg_loss += loss
         avg_loss /= num_batches
         print()
     model.train()

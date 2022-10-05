@@ -4,6 +4,7 @@ import math
 
 from css.utils.model_util import get_onnx_model, to_numpy
 from css.executor.feature import FeatureExtractor
+import css.models as models
 
 
 class Separator:
@@ -14,10 +15,12 @@ class Separator:
         sess_options=None,
         device="cpu",
         backend="onnx",
+        model_config=None,
         lowcut=80,
         highcut=2000,
     ):
 
+        self.backend = backend
         if backend == "onnx":
             assert (
                 separation_config["batch_size"] == 1
@@ -26,6 +29,16 @@ class Separator:
         if backend == "onnx":
             self.separator, device = get_onnx_model(
                 separation_config["model_path"], sess_options, device
+            )
+        elif backend == "pytorch":
+            import json
+
+            with open(model_config, "r") as f:
+                conf = json.load(f)
+            conf["model"]["idim"] = conf["feature"]["idim"]
+            conf["model"]["num_bins"] = conf["feature"]["num_bins"]
+            self.separator = models.MODELS[conf["model"].pop("model_type")].build_model(
+                conf["model"]
             )
         else:
             raise ValueError(f"Unknown backend: {backend}")
@@ -91,17 +104,29 @@ class Separator:
         B, D, T = s.shape
         mag_specs, f, re, im = self.feature.forward(s)
 
-        # ONNX model expects input of shape (1, F, batch_size)
-        B, F, T = f.shape
-        f = f.reshape(1, F, B * T)
-        ort_inputs = {self.separator.get_inputs()[0].name: to_numpy(f)}  # 1 x F x BT
-        this_res = self.separator.run(None, ort_inputs)
+        if self.backend == "onnx":
+            # ONNX model expects input of shape (1, F, batch_size)
+            B, F, T = f.shape
+            f = f.reshape(1, F, B * T)
+            ort_inputs = {
+                self.separator.get_inputs()[0].name: to_numpy(f)
+            }  # 1 x F x BT
+            this_res = self.separator.run(None, ort_inputs)
 
-        masks = torch.Tensor(
-            np.stack((this_res[0], this_res[1], this_res[2]), axis=0)
-        )  # (3, F, BT) The 3 masks correspond to spk1, spk2, noise
-        masks = masks.reshape(3, B, F // D, T).permute(1, 2, 3, 0)  # (B, F, T, 3)
-        masks = torch.clamp(masks, max=1.0)  # Cap the mask values at 1.0.
+            masks = torch.Tensor(
+                np.stack((this_res[0], this_res[1], this_res[2]), axis=0)
+            )  # (3, F, BT) The 3 masks correspond to spk1, spk2, noise
+            masks = masks.reshape(3, B, F // D, T).permute(1, 2, 3, 0)  # (B, F, T, 3)
+            masks = torch.clamp(masks, max=1.0)  # Cap the mask values at 1.0.
+
+        elif self.backend == "pytorch":
+            f = f.permute(0, 2, 1)  # (B, T, F)
+            masks = self.separator(f)  # 3 x [B, T, F]
+            masks = torch.stack(masks, dim=-1).permute(0, 2, 1, 3)  # [B, F, T, 3]
+            masks = torch.clamp(masks, max=1.0)  # Cap the mask values at 1.0.
+
+        else:
+            raise ValueError(f"Unknown backend: {self.backend}")
 
         if self.merge:
             spec = re + 1j * im

@@ -33,6 +33,7 @@ def run(args):
         recordings = recordings.filter(lambda x: f"session{args.session}" in x.id)
     egs_reader = EgsReader(recordings, multi_channel=args.multi_channel)
 
+    opts = None
     if args.backend == "onnx":
         import onnxruntime
 
@@ -58,6 +59,7 @@ def run(args):
         sr=sampling_rate,
         device=device,
         backend=args.backend,
+        model_config=args.train_config,
     )
     stitcher = Stitcher(exp_config["stitching"])
     beamformer = Beamformer(exp_config["beamforming"])
@@ -68,18 +70,30 @@ def run(args):
 
         # Apply separation to get masks. The masks here will be a list of masks, each
         # corresponding to one window.
+        logging.info("Performing chunk-wise separation...")
         window_masks, mag_specs = separator.separate(mixed)
 
         # Stitch window-level masks to get session-level masks
+        logging.info("Stitching masks...")
         mask_permutation = stitcher.get_stitch(mag_specs, window_masks)
         stitched_masks = stitcher.get_connect(mask_permutation, window_masks)
 
+        # debugging
+        # import numpy as np
+        # masks_np = np.stack([x.detach().numpy() for x in stitched_masks])
+        # np.save(dump_dir / f"{key}_masks.npy", masks_np)
+
         # Apply beamforming using masks
+        logging.info("Beamforming...")
         wav_ch0, wav_ch1 = beamformer.continuous_process(mixed, stitched_masks)
 
         # Write out the separated audio
+        logging.info("Writing out separated audio...")
         torchaudio.save(dump_dir / f"{key}_0.wav", wav_ch0, sampling_rate)
         torchaudio.save(dump_dir / f"{key}_1.wav", wav_ch1, sampling_rate)
+
+        # Free memory
+        del mixed, wav_ch0, wav_ch1, window_masks, mag_specs, stitched_masks
 
     logging.info(f"Processed {len(egs_reader)} utterances")
 

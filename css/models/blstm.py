@@ -127,7 +127,6 @@ class BLSTMLayer(torch.nn.Module):
         """Compute encoded features.
 
         :param torch.Tensor x: encoded source features (batch, max_time_in, size)
-        :param torch.Tensor mask: mask for x (batch, max_time_in)
         :rtype: Tuple[torch.Tensor, torch.Tensor]
         """
         x = self.lstm(x)[0]

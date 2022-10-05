@@ -87,13 +87,3 @@ if [ $stage -le 4 ]; then
     done
   done
 fi
-
-if [ $stage -le 5 ]; then
-  log "Creating FFCV dataset"
-  for part in train valid; do
-    python pyscripts/create_ffcv_dataset.py \
-      --data_dir data/$part \
-      --out_path $dump_dir \
-      --num_workers 8
-  done
-fi

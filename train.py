@@ -21,6 +21,11 @@ from tensorboardX import SummaryWriter
 
 import css.models as models
 import css.objectives as objectives
+from css.datasets.feature_separation_dataset import (
+    FeatureSeparationDataset,
+    feature_collater,
+)
+
 from css.trainer import LRScheduler, train_one_epoch, validate
 
 from itertools import chain
@@ -100,34 +105,9 @@ def main(rank, world_size, conf):
         )
         conf["epoch"] = 0
 
-    if conf["data"]["feature"] == "on_the_fly":
-        from css.executor.feature import FeatureExtractor
-        from css.datasets.raw_waveform_separation_dataset import (
-            RawWaveformSeparationDataset,
-            raw_waveform_collater,
-        )
-
-        # Feature extractor
-        feat = FeatureExtractor(
-            frame_len=conf["feature"]["frame_length"],
-            frame_hop=conf["feature"]["frame_shift"],
-            ipd_index=conf["feature"]["ipd"],
-        )
-        collate_fn = raw_waveform_collater
-
-        train_set = RawWaveformSeparationDataset(conf["data"]["train_json"])
-        val_set = RawWaveformSeparationDataset(conf["data"]["valid_json"])
-
-    elif conf["data"]["feature"] == "precomputed":
-        from css.datasets.feature_separation_dataset import (
-            FeatureSeparationDataset,
-            feature_collater,
-        )
-
-        feat = None
-        train_set = FeatureSeparationDataset(conf["data"]["train_dir"])
-        val_set = FeatureSeparationDataset(conf["data"]["valid_dir"])
-        collate_fn = feature_collater
+    train_set = FeatureSeparationDataset(conf["data"]["train_dir"])
+    val_set = FeatureSeparationDataset(conf["data"]["valid_dir"])
+    collate_fn = feature_collater
 
     # Create distributed sampler pinned to rank
     train_sampler = DistributedSampler(
@@ -176,15 +156,22 @@ def main(rank, world_size, conf):
             logging.info("Resuming ...")
         # Loads state dict
         mdl = torch.load(
-            os.path.sep.join([conf["expdir"], conf["resume"]]), map_location="cpu"
+            os.path.sep.join([conf["expdir"], conf["resume"] + ".mdl"]),
+            map_location="cpu",
         )
-        model.load_state_dict(mdl["model"])
+
+        from collections import OrderedDict
+
+        new_state_dict = OrderedDict()
+        for k, v in mdl["model"].items():
+            name = k.replace("module.", "")  # remove 'module.' of dataparallel
+            new_state_dict[name] = v
+        model.load_state_dict(new_state_dict)
+
         objective.load_state_dict(mdl["objective"])
 
     # Send model, feature extractor, and objective function to GPU (or keep on CPU)
     model.to(device)
-    if feat is not None:
-        feat.to(device)
     objective.to(device)
     if world_size > 1:
         model = DDP(model, device_ids=[rank])
@@ -250,7 +237,6 @@ def main(rank, world_size, conf):
         train_dataloader,
         val_dataloader,
         model,
-        feat,
         objective,
         optimizer,
         lr_sched,
@@ -270,7 +256,6 @@ def train(
     train_dataloader,
     val_dataloader,
     model,
-    feat,
     objective,
     optimizer,
     lr_sched,
@@ -291,7 +276,6 @@ def train(
             conf,
             train_dataloader,
             model,
-            feat,
             objective,
             optimizer,
             lr_sched,
@@ -305,9 +289,11 @@ def train(
             avg_loss_val = validate(
                 val_dataloader,
                 model,
-                feat,
                 objective,
                 device,
+                writer,
+                conf,
+                global_step=global_step,
             )
             if writer is not None:
                 writer.add_scalar("loss/valid", avg_loss_val, global_step=e)

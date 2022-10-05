@@ -66,6 +66,10 @@ class Beamformer:
 
             # deduplication by masking - give up recovering low-volume competitor
             S = torch.stack((out_ch0, out_ch1), dim=1)  # B x 2 x F x T
+
+            # free up memory
+            del out_ch0, out_ch1
+
             S_pow = 10 * torch.log10(torch.sum(torch.abs(S) ** 2, dim=(2, 3)))
             S_abs = torch.abs(S)
             gain = torch.divide(S_abs, torch.amax(S_abs, dim=1, keepdim=True))
